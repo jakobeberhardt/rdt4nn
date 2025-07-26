@@ -1,0 +1,27 @@
+x-benchmark-template: &benchmark
+  tty: true
+  stdin_open: true
+
+
+services:
+  tealeaf_core0:
+    <<: *benchmark
+    image: registry.jakob-eberhardt.de/rdt4nn/benchmark/tealeaf:1.0.0
+    build:
+      context: ./image/benchmark/tealeaf       
+    env_file:
+      - ./image/benchmark/tealeaf/config/run.env
+    volumes:
+      - ./image/benchmark/tealeaf/config/small.in:/opt/tealeaf/tealeaf.in:ro
+    cpuset: "0"                                
+
+
+  matmul_core1:
+    <<: *benchmark
+    image: registry.jakob-eberhardt.de/rdt4nn/benchmark/matmul:1.0.0
+    build:
+      context: ./image/benchmark/matmul
+    volumes:
+      - ./image/benchmark/matmul/config/small.in:/opt/matmul/input.in:ro
+    cpuset: "2"                            
+
