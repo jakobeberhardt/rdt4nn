@@ -33,7 +33,7 @@ The tool provides:
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Path to benchmark configuration file (required)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
-	rootCmd.MarkPersistentFlagRequired("config")
+	// Don't mark config as required globally, handle it per command
 }
 
 func Execute() error {
@@ -41,6 +41,11 @@ func Execute() error {
 }
 
 func runBenchmark(cmd *cobra.Command, args []string) {
+	// Check if config file is provided
+	if configFile == "" {
+		log.Fatal("Configuration file is required. Use --config or -c flag.")
+	}
+
 	// Set up logging
 	if verbose {
 		log.SetLevel(log.DebugLevel)

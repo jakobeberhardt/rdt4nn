@@ -38,7 +38,7 @@ func NewRunner(cfg *config.Config) (*Runner, error) {
 	benchmarkID := fmt.Sprintf("%s_%d", cfg.Benchmark.Name, time.Now().Unix())
 	
 	// Initialize container manager
-	containerMgr, err := container.NewManager(cfg.Docker.Auth)
+	containerMgr, err := container.NewManager(cfg.Benchmark.Docker.Auth)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create container manager: %w", err)

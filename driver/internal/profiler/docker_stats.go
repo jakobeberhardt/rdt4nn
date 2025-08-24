@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/storage"
 	log "github.com/sirupsen/logrus"
@@ -38,8 +39,12 @@ func (d *DockerStatsCollector) Initialize(ctx context.Context) error {
 // Collect collects Docker statistics for all benchmark containers
 func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time) ([]storage.Measurement, error) {
 	// List containers with benchmark label
+	filterArgs := filters.NewArgs()
+	filterArgs.Add("label", "benchmark.id="+d.benchmarkID)
+	
 	containers, err := d.client.ContainerList(ctx, types.ContainerListOptions{
-		Filters: types.NewArgsFilter(),
+		Filters: filterArgs,
+		All:     false, // Only running containers
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
@@ -48,11 +53,6 @@ func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time)
 	var measurements []storage.Measurement
 
 	for _, container := range containers {
-		// Check if container belongs to our benchmark
-		if benchmarkID, exists := container.Labels["benchmark.id"]; !exists || benchmarkID != d.benchmarkID {
-			continue
-		}
-
 		// Get container stats
 		stats, err := d.client.ContainerStats(ctx, container.ID, false)
 		if err != nil {

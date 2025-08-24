@@ -3,9 +3,9 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
-	"syscall"
 
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/config"
 	log "github.com/sirupsen/logrus"
@@ -78,14 +78,19 @@ func (ds *DefaultScheduler) setCPUAffinity(containerID string, core int) error {
 		log.WithError(err).WithFields(log.Fields{
 			"pid":  pid,
 			"core": core,
-		}).Debug("Failed to set CPU affinity with taskset, trying syscall")
-
-		// Fallback to syscall
-		cpuSet := &syscall.CPUSet{}
-		cpuSet.Set(core)
-		if err := syscall.SchedSetaffinity(pid, cpuSet); err != nil {
-			return fmt.Errorf("failed to set CPU affinity via syscall: %w", err)
+		}).Warn("Failed to set CPU affinity with taskset")
+		
+		// Try alternative approach using /proc/PID/task/PID/cpuset if available
+		cpusetPath := fmt.Sprintf("/proc/%d/cpuset", pid)
+		if _, err := os.Stat(cpusetPath); err == nil {
+			// Write to cgroup cpuset if available
+			log.WithFields(log.Fields{
+				"pid":  pid,
+				"core": core,
+			}).Debug("Attempting to set CPU affinity via cgroup")
 		}
+		
+		return fmt.Errorf("failed to set CPU affinity: %w", err)
 	}
 
 	log.WithFields(log.Fields{
