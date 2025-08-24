@@ -1,0 +1,31 @@
+benchmark:
+  name: simple_test
+  max_t: -1  # Run indefinitely until CTRL+C
+  log_level: debug
+  scheduler:
+    implementation: default  # Use default scheduler
+    rdt: false  # Disable RDT for simplicity
+  data:
+    profilefrequency: 500  # Profile every 500ms
+    db:
+      host: localhost:8086
+      name: benchmarks
+      user: jakob
+      password: "123"
+    rdt: false
+    perf: true
+    dockerstats: true
+  docker:
+    auth:
+      registry: ""  # Use public Docker Hub
+      username: ""
+      password: ""
+
+# Simple single container test
+container0:
+  index: 0
+  image: nginx:alpine
+  port: "80:8080"
+  start: 0
+  stop: -1
+  core: 0
