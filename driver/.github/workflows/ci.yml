@@ -1,0 +1,177 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ created ]
+
+env:
+  GO_VERSION: '1.21'
+  BINARY_NAME: 'rdt4nn-driver'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
+    - name: Download dependencies
+      working-directory: ./driver
+      run: go mod download
+    
+    - name: Run tests
+      working-directory: ./driver
+      run: go test -v ./...
+    
+    - name: Run linter
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        working-directory: ./driver
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Build binary
+      working-directory: ./driver
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: |
+        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+        COMMIT=$(git rev-parse --short HEAD)
+        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+        LDFLAGS="-ldflags -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}"
+        go build $LDFLAGS -o ${BINARY_NAME}-${{ matrix.goos }}-${{ matrix.goarch }} .
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: ./driver/${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+
+  validate-configs:
+    name: Validate Configurations
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Build driver
+      working-directory: ./driver
+      run: go build -o ${{ env.BINARY_NAME }} .
+    
+    - name: Validate example configurations
+      working-directory: ./driver
+      run: |
+        ./${{ env.BINARY_NAME }} validate -c examples/simple_test.yml
+        ./${{ env.BINARY_NAME }} validate -c examples/redis_nginx_benchmark.yml
+        ./${{ env.BINARY_NAME }} validate -c examples/memory_intensive.yml
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: jakobeberhardt/rdt4nn-driver
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+    
+    - name: Build and push
+      uses: docker/build-push-action@v5
+      with:
+        context: ./driver
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        platforms: linux/amd64,linux/arm64
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build, validate-configs]
+    if: github.event_name == 'release'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Create release archive
+      run: |
+        mkdir -p release
+        for dir in ${{ env.BINARY_NAME }}-*; do
+          if [ -d "$dir" ]; then
+            cp -r "$dir"/* release/
+          fi
+        done
+        
+        # Create archives
+        cd release
+        for binary in ${{ env.BINARY_NAME }}-*; do
+          if [ -f "$binary" ]; then
+            OS_ARCH=$(echo "$binary" | sed 's/^${{ env.BINARY_NAME }}-//')
+            tar -czf "${{ env.BINARY_NAME }}-${OS_ARCH}.tar.gz" "$binary"
+            sha256sum "${{ env.BINARY_NAME }}-${OS_ARCH}.tar.gz" > "${{ env.BINARY_NAME }}-${OS_ARCH}.tar.gz.sha256"
+          fi
+        done
+    
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release/*.tar.gz*
+        generate_release_notes: true
