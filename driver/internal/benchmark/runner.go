@@ -21,23 +21,24 @@ import (
 type Runner struct {
 	config         *config.Config
 	containerMgr   *container.Manager
-	profilerMgr    *profiler.Manager
+	profilerMgr    profiler.ProfilerManager
 	schedulerMgr   scheduler.Scheduler
 	storageMgr     *storage.Manager
 	benchmarkID    string
+	benchmarkIDNum int64    
 	startTime      time.Time
+	endTime        time.Time
+	samplingStep   int64    
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 }
 
-// NewRunner creates a new benchmark runner with the given configuration
 func NewRunner(cfg *config.Config) (*Runner, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	benchmarkID := fmt.Sprintf("%s_%d", cfg.Benchmark.Name, time.Now().Unix())
 	
-	// Initialize container manager
 	containerMgr, err := container.NewManager(cfg.Benchmark.Docker.Auth)
 	if err != nil {
 		cancel()
@@ -51,8 +52,28 @@ func NewRunner(cfg *config.Config) (*Runner, error) {
 		return nil, fmt.Errorf("failed to create storage manager: %w", err)
 	}
 
-	// Initialize profiler manager
-	profilerMgr, err := profiler.NewManager(&cfg.Benchmark.Data, benchmarkID, storageMgr)
+	// Get next benchmark ID from database
+	benchmarkIDNum, err := storageMgr.GetNextBenchmarkID(ctx)
+	if err != nil {
+		log.WithError(err).Warn("Failed to get next benchmark ID from database, using timestamp")
+		benchmarkIDNum = time.Now().Unix()
+	}
+
+	log.WithFields(log.Fields{
+		"benchmark_id_string": benchmarkID,
+		"benchmark_id_number": benchmarkIDNum,
+	}).Info("Benchmark IDs assigned")
+
+	// Initialize comprehensive profiler manager with container configs and scheduler info
+	profilerMgr, err := profiler.NewComprehensiveManager(
+		&cfg.Benchmark.Data,
+		benchmarkID,
+		benchmarkIDNum,
+		time.Now(), // Will be set properly when benchmark starts
+		storageMgr,
+		convertContainerConfigs(cfg.Container), // Convert to proper format
+		cfg.Benchmark.Scheduler.Implementation,
+	)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create profiler manager: %w", err)
@@ -66,14 +87,16 @@ func NewRunner(cfg *config.Config) (*Runner, error) {
 	}
 
 	return &Runner{
-		config:       cfg,
-		containerMgr: containerMgr,
-		profilerMgr:  profilerMgr,
-		schedulerMgr: schedulerMgr,
-		storageMgr:   storageMgr,
-		benchmarkID:  benchmarkID,
-		ctx:          ctx,
-		cancel:       cancel,
+		config:         cfg,
+		containerMgr:   containerMgr,
+		profilerMgr:    profilerMgr,
+		schedulerMgr:   schedulerMgr,
+		storageMgr:     storageMgr,
+		benchmarkID:    benchmarkID,
+		benchmarkIDNum: benchmarkIDNum,
+		samplingStep:   0,
+		ctx:            ctx,
+		cancel:         cancel,
 	}, nil
 }
 
@@ -89,30 +112,24 @@ func (r *Runner) Run() error {
 	// Set up signal handling for graceful shutdown
 	r.setupSignalHandling()
 
-	// Phase 1: Preparation
 	if err := r.prepare(); err != nil {
 		return fmt.Errorf("preparation phase failed: %w", err)
 	}
 
-	// Phase 2: Execution
 	if err := r.execute(); err != nil {
 		return fmt.Errorf("execution phase failed: %w", err)
 	}
 
-	// Phase 3: Cleanup
 	if err := r.cleanup(); err != nil {
-		log.WithError(err).Error("Cleanup phase encountered errors")
-		return err
+		log.WithError(err).Warn("Cleanup phase completed with warnings")
 	}
 
 	return nil
 }
 
-// prepare handles the preparation phase
 func (r *Runner) prepare() error {
 	log.Info("Entering preparation phase")
 
-	// Pull all required images
 	if err := r.containerMgr.PullImages(r.ctx, r.config.Container); err != nil {
 		return fmt.Errorf("failed to pull images: %w", err)
 	}
@@ -128,7 +145,7 @@ func (r *Runner) prepare() error {
 	}
 
 	// Initialize profiler
-	if err := r.profilerMgr.Initialize(r.ctx); err != nil {
+	if err := r.profilerMgr.Initialize(r.ctx, r.containerMgr.GetContainerIDs()); err != nil {
 		return fmt.Errorf("failed to initialize profiler: %w", err)
 	}
 
@@ -136,7 +153,6 @@ func (r *Runner) prepare() error {
 	return nil
 }
 
-// execute handles the main execution phase
 func (r *Runner) execute() error {
 	log.Info("Entering execution phase")
 
@@ -144,7 +160,7 @@ func (r *Runner) execute() error {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		if err := r.profilerMgr.StartProfiling(r.ctx); err != nil {
+		if err := r.profilerMgr.StartProfiling(r.ctx, r.containerMgr.GetContainerIDs()); err != nil {
 			log.WithError(err).Error("Profiling failed")
 		}
 	}()
@@ -170,7 +186,6 @@ func (r *Runner) execute() error {
 	return nil
 }
 
-// startContainersScheduled starts containers according to their scheduled start times
 func (r *Runner) startContainersScheduled() error {
 	// Create a map of start times to containers
 	startSchedule := make(map[int][]string)
@@ -212,7 +227,6 @@ func (r *Runner) startContainersScheduled() error {
 			break
 		}
 
-		// Wait for next second
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err()
@@ -251,31 +265,30 @@ func (r *Runner) cleanup() error {
 
 	var errors []error
 
-	// Stop profiling
 	if err := r.profilerMgr.Stop(); err != nil {
+		log.WithError(err).Warn("Failed to stop profiler cleanly")
 		errors = append(errors, fmt.Errorf("failed to stop profiler: %w", err))
 	}
 
-	// Stop and remove containers
 	if err := r.containerMgr.StopAndCleanup(r.ctx); err != nil {
+		log.WithError(err).Warn("Container cleanup encountered issues")
 		errors = append(errors, fmt.Errorf("failed to cleanup containers: %w", err))
 	}
 
-	// Finalize scheduler
 	if err := r.schedulerMgr.Finalize(r.ctx); err != nil {
+		log.WithError(err).Warn("Failed to finalize scheduler cleanly")
 		errors = append(errors, fmt.Errorf("failed to finalize scheduler: %w", err))
 	}
 
-	// Close storage connections
 	if err := r.storageMgr.Close(); err != nil {
+		log.WithError(err).Warn("Failed to close storage cleanly")
 		errors = append(errors, fmt.Errorf("failed to close storage: %w", err))
 	}
 
 	if len(errors) > 0 {
-		for _, err := range errors {
-			log.WithError(err).Error("Cleanup error")
-		}
-		return fmt.Errorf("cleanup completed with %d errors", len(errors))
+		log.WithField("error_count", len(errors)).Warn("Cleanup completed with some warnings")
+		// Still return an error for logging purposes, but the main function should handle this gracefully
+		return fmt.Errorf("cleanup completed with %d warnings", len(errors))
 	}
 
 	log.Info("Cleanup phase completed successfully")
@@ -303,4 +316,15 @@ func (r *Runner) getMaxStartTime() int {
 		}
 	}
 	return maxStartTime
+}
+
+// convertContainerConfigs converts the container config map to the format expected by comprehensive profiler
+func convertContainerConfigs(containers map[string]config.ContainerConfig) map[string]*config.ContainerConfig {
+	result := make(map[string]*config.ContainerConfig)
+	for name, cfg := range containers {
+		// Create a copy to avoid pointer issues
+		containerCfg := cfg
+		result[name] = &containerCfg
+	}
+	return result
 }

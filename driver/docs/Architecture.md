@@ -2,7 +2,7 @@
 
 ## Overview
 
-The RDT4NN Driver is designed as a modular, extensible system for conducting container-based performance benchmarks with hardware-level profiling capabilities. The architecture follows clean separation of concerns with well-defined interfaces between components.
+The RDT4NN Driver is designed as a modular, extensible system for conducting container-based performance benchmarks with hardware-level profiling capabilities.
 
 ## System Architecture
 

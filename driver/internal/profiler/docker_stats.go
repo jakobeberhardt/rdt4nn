@@ -13,20 +13,26 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// DockerStatsCollector collects Docker container statistics
 type DockerStatsCollector struct {
-	benchmarkID string
-	client      *client.Client
+	benchmarkID  string
+	client       *client.Client
+	containerIDs map[string]string // name -> ID mapping
 }
 
-// NewDockerStatsCollector creates a new Docker stats collector
 func NewDockerStatsCollector(benchmarkID string) *DockerStatsCollector {
 	return &DockerStatsCollector{
-		benchmarkID: benchmarkID,
+		benchmarkID:  benchmarkID,
+		containerIDs: make(map[string]string),
 	}
 }
 
-// Initialize initializes the Docker stats collector
+func (d *DockerStatsCollector) SetContainerIDs(containerIDs map[string]string) {
+	d.containerIDs = make(map[string]string)
+	for name, id := range containerIDs {
+		d.containerIDs[name] = id
+	}
+}
+
 func (d *DockerStatsCollector) Initialize(ctx context.Context) error {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -36,9 +42,7 @@ func (d *DockerStatsCollector) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// Collect collects Docker statistics for all benchmark containers
 func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time) ([]storage.Measurement, error) {
-	// List containers with benchmark label
 	filterArgs := filters.NewArgs()
 	filterArgs.Add("label", "benchmark.id="+d.benchmarkID)
 	
@@ -68,7 +72,6 @@ func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time)
 		}
 		stats.Body.Close()
 
-		// Convert stats to measurements
 		containerMeasurements := d.convertStatsToMeasurements(container, statsJSON, timestamp)
 		measurements = append(measurements, containerMeasurements...)
 	}
@@ -76,7 +79,6 @@ func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time)
 	return measurements, nil
 }
 
-// convertStatsToMeasurements converts Docker stats to storage measurements
 func (d *DockerStatsCollector) convertStatsToMeasurements(container types.Container, stats types.StatsJSON, timestamp time.Time) []storage.Measurement {
 	containerName := ""
 	containerIndex := ""
@@ -98,7 +100,6 @@ func (d *DockerStatsCollector) convertStatsToMeasurements(container types.Contai
 
 	var measurements []storage.Measurement
 
-	// CPU metrics
 	cpuUsage := float64(0)
 	if stats.PreCPUStats.CPUUsage.TotalUsage > 0 {
 		cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
@@ -115,7 +116,6 @@ func (d *DockerStatsCollector) convertStatsToMeasurements(container types.Contai
 		Timestamp: timestamp,
 	})
 
-	// Memory metrics
 	memUsage := float64(stats.MemoryStats.Usage)
 	memLimit := float64(stats.MemoryStats.Limit)
 	memPercent := float64(0)
@@ -137,7 +137,6 @@ func (d *DockerStatsCollector) convertStatsToMeasurements(container types.Contai
 		Timestamp: timestamp,
 	})
 
-	// Network metrics
 	if len(stats.Networks) > 0 {
 		var rxBytes, txBytes uint64
 		for _, network := range stats.Networks {
@@ -160,7 +159,6 @@ func (d *DockerStatsCollector) convertStatsToMeasurements(container types.Contai
 		})
 	}
 
-	// Block I/O metrics
 	if len(stats.BlkioStats.IoServiceBytesRecursive) > 0 {
 		var readBytes, writeBytes uint64
 		for _, blkio := range stats.BlkioStats.IoServiceBytesRecursive {
@@ -189,7 +187,6 @@ func (d *DockerStatsCollector) convertStatsToMeasurements(container types.Contai
 	return measurements
 }
 
-// copyTags creates a copy of the tags map
 func copyTags(original map[string]string) map[string]string {
 	copy := make(map[string]string)
 	for k, v := range original {
@@ -198,7 +195,6 @@ func copyTags(original map[string]string) map[string]string {
 	return copy
 }
 
-// Close closes the Docker client
 func (d *DockerStatsCollector) Close() error {
 	if d.client != nil {
 		return d.client.Close()
@@ -206,7 +202,6 @@ func (d *DockerStatsCollector) Close() error {
 	return nil
 }
 
-// Name returns the collector name
 func (d *DockerStatsCollector) Name() string {
 	return "docker_stats"
 }

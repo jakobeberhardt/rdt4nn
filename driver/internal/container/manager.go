@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -224,34 +225,63 @@ func (m *Manager) StopContainer(ctx context.Context, name string) error {
 func (m *Manager) StopAndCleanup(ctx context.Context) error {
 	log.Info("Stopping and cleaning up containers")
 
+	// Use a fresh context for cleanup to avoid cancellation issues
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	var errors []error
 
 	for name, containerID := range m.containers {
-		// Stop container
+		// First, try to stop container gracefully
 		timeout := 10
-		if err := m.client.ContainerStop(ctx, containerID, container.StopOptions{
+		stopErr := m.client.ContainerStop(cleanupCtx, containerID, container.StopOptions{
 			Timeout: &timeout,
-		}); err != nil {
-			errors = append(errors, fmt.Errorf("failed to stop container %s: %w", name, err))
-			continue
+		})
+		
+		// If graceful stop failed, we'll still try to force remove
+		if stopErr != nil && !isContainerNotFoundError(stopErr) {
+			log.WithFields(log.Fields{
+				"name":         name,
+				"container_id": containerID[:12],
+				"error":        stopErr,
+			}).Warn("Failed to stop container gracefully, will try force removal")
 		}
 
-		// Remove container
-		if err := m.client.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{
+		// Remove container (force removal)
+		removeErr := m.client.ContainerRemove(cleanupCtx, containerID, types.ContainerRemoveOptions{
 			RemoveVolumes: true,
-			Force:         true,
-		}); err != nil {
-			errors = append(errors, fmt.Errorf("failed to remove container %s: %w", name, err))
+			Force:         true, // Force removal even if container is running
+		})
+
+		if removeErr != nil {
+			if isContainerNotFoundError(removeErr) {
+				log.WithField("name", name).Info("Container already removed")
+			} else {
+				errors = append(errors, fmt.Errorf("failed to remove container %s: %w", name, removeErr))
+			}
 		} else {
 			log.WithField("name", name).Info("Container cleaned up successfully")
 		}
 	}
 
+	// Clear the container map
+	m.containers = make(map[string]string)
+
 	if len(errors) > 0 {
+		// Log all errors but don't fail the cleanup completely
+		for _, err := range errors {
+			log.WithError(err).Warn("Container cleanup error")
+		}
 		return fmt.Errorf("encountered %d errors during cleanup", len(errors))
 	}
 
 	return nil
+}
+
+// isContainerNotFoundError checks if the error indicates the container was not found
+func isContainerNotFoundError(err error) bool {
+	return strings.Contains(err.Error(), "No such container") || 
+		   strings.Contains(err.Error(), "not found")
 }
 
 // GetContainerIDs returns a map of container names to IDs
