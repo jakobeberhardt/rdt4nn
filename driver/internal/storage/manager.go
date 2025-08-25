@@ -16,6 +16,7 @@ type Manager struct {
 	client   influxdb2.Client
 	writeAPI api.WriteAPI
 	config   config.DBConfig
+	org      string
 }
 
 // Measurement represents a data point to be stored
@@ -28,15 +29,23 @@ type Measurement struct {
 
 // NewManager creates a new storage manager
 func NewManager(config config.DBConfig) (*Manager, error) {
-	// Create InfluxDB client (token can be empty for development)
-	token := ""
+	// Use the token from password field for InfluxDB 2.x authentication
+	token := config.Password
+	org := "rdt4nn" // Default organization for RDT4NN
+	
 	if config.User != "" && config.Password != "" {
-		// For production, you might want to use actual authentication
-		// This is a simplified approach
 		log.WithField("user", config.User).Info("InfluxDB authentication configured")
 	}
 	
-	client := influxdb2.NewClient(fmt.Sprintf("http://%s", config.Host), token)
+	// Debug logging to check actual values
+	log.WithFields(log.Fields{
+		"host":   config.Host,
+		"bucket": config.Name,
+		"org":    org,
+		"token":  "***", 
+	}).Debug("Creating InfluxDB client with values")
+	
+	client := influxdb2.NewClient(config.Host, token)
 	
 	// Test connection with a ping (with timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -45,11 +54,11 @@ func NewManager(config config.DBConfig) (*Manager, error) {
 	health, err := client.Health(ctx)
 	if err != nil {
 		log.WithError(err).Warn("Failed to connect to InfluxDB - continuing without storage")
-		// Return a minimal manager that doesn't fail
 		return &Manager{
 			client:   client,
-			writeAPI: client.WriteAPI("", config.Name),
+			writeAPI: client.WriteAPI(org, config.Name),
 			config:   config,
+			org:      org,
 		}, nil
 	}
 	
@@ -57,10 +66,8 @@ func NewManager(config config.DBConfig) (*Manager, error) {
 		log.WithField("status", health.Status).Warn("InfluxDB health check warning")
 	}
 
-	// Get write API for non-blocking writes (org can be empty for InfluxDB 1.x compatibility)
-	writeAPI := client.WriteAPI("", config.Name)
+	writeAPI := client.WriteAPI(org, config.Name)
 
-	// Set up error handling
 	errorsCh := writeAPI.Errors()
 	go func() {
 		for err := range errorsCh {
@@ -72,6 +79,7 @@ func NewManager(config config.DBConfig) (*Manager, error) {
 		client:   client,
 		writeAPI: writeAPI,
 		config:   config,
+		org:      org,
 	}
 
 	log.WithFields(log.Fields{
@@ -82,7 +90,6 @@ func NewManager(config config.DBConfig) (*Manager, error) {
 	return sm, nil
 }
 
-// WriteMeasurements writes a batch of measurements to InfluxDB
 func (sm *Manager) WriteMeasurements(ctx context.Context, measurements []Measurement) error {
 	if len(measurements) == 0 {
 		return nil
@@ -97,7 +104,6 @@ func (sm *Manager) WriteMeasurements(ctx context.Context, measurements []Measure
 			measurement.Timestamp,
 		)
 		
-		// Write point (non-blocking)
 		sm.writeAPI.WritePoint(point)
 	}
 
@@ -105,14 +111,12 @@ func (sm *Manager) WriteMeasurements(ctx context.Context, measurements []Measure
 	return nil
 }
 
-// WriteMeasurement writes a single measurement to InfluxDB
 func (sm *Manager) WriteMeasurement(ctx context.Context, measurement Measurement) error {
 	return sm.WriteMeasurements(ctx, []Measurement{measurement})
 }
 
-// Query executes a query against InfluxDB
 func (sm *Manager) Query(ctx context.Context, query string) ([]map[string]interface{}, error) {
-	queryAPI := sm.client.QueryAPI("")
+	queryAPI := sm.client.QueryAPI(sm.org)
 	
 	result, err := queryAPI.Query(ctx, query)
 	if err != nil {
@@ -124,7 +128,6 @@ func (sm *Manager) Query(ctx context.Context, query string) ([]map[string]interf
 		record := result.Record()
 		recordMap := make(map[string]interface{})
 		
-		// Add all values from the record
 		for key, value := range record.Values() {
 			recordMap[key] = value
 		}
@@ -141,36 +144,29 @@ func (sm *Manager) Query(ctx context.Context, query string) ([]map[string]interf
 
 // CreateBucket creates a bucket in InfluxDB (if needed)
 func (sm *Manager) CreateBucket(ctx context.Context, bucketName string, retention time.Duration) error {
-	// Note: This is a simplified version. In production, you might want to use InfluxDB v2 Organizations API
-	// For now, we'll skip bucket creation as it typically requires admin access
+	
 	log.WithField("bucket", bucketName).Info("Bucket creation skipped - ensure bucket exists in InfluxDB")
 	return nil
 }
 
-// Flush ensures all pending writes are sent to InfluxDB
 func (sm *Manager) Flush() error {
 	sm.writeAPI.Flush()
 	return nil
 }
 
-// Close closes the storage manager and all connections
 func (sm *Manager) Close() error {
 	log.Info("Closing storage manager")
 	
-	// Flush any pending writes
 	sm.writeAPI.Flush()
 	
-	// Close client (WriteAPI is automatically closed when client closes)
 	sm.client.Close()
 	
 	return nil
 }
 
-// GetStats returns statistics about the storage
 func (sm *Manager) GetStats(ctx context.Context) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 	
-	// Get bucket information
 	query := fmt.Sprintf(`
 		from(bucket: "%s")
 		|> range(start: -1h)
@@ -193,7 +189,6 @@ func (sm *Manager) GetStats(ctx context.Context) (map[string]interface{}, error)
 	return stats, nil
 }
 
-// WriteMetadata writes benchmark metadata
 func (sm *Manager) WriteMetadata(ctx context.Context, benchmarkID string, metadata map[string]interface{}) error {
 	tags := map[string]string{
 		"benchmark_id": benchmarkID,

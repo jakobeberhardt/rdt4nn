@@ -3,7 +3,11 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,13 +75,31 @@ type ContainerConfig struct {
 
 // LoadConfig loads and validates the benchmark configuration from a YAML file
 func LoadConfig(filename string) (*Config, error) {
+	// Load .env file from project root (relative to config file location)
+	configDir := filepath.Dir(filename)
+	envPath := filepath.Join(configDir, "..", ".env") // Assuming config is in driver/examples
+	if _, err := os.Stat(envPath); err == nil {
+		if err := godotenv.Load(envPath); err != nil {
+			return nil, fmt.Errorf("failed to load .env file: %w", err)
+		}
+	} else {
+		// Try loading from current directory
+		if err := godotenv.Load(); err != nil {
+			// .env file is optional, just log and continue
+			fmt.Printf("Warning: No .env file found (this is optional)\n")
+		}
+	}
+
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	// Substitute environment variables in the YAML content
+	expandedData := expandEnvVars(string(data))
+
 	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	if err := yaml.Unmarshal([]byte(expandedData), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
@@ -86,6 +108,31 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// expandEnvVars expands environment variables in the format ${VAR_NAME} or $VAR_NAME
+func expandEnvVars(content string) string {
+	// Replace ${VAR_NAME} format
+	re1 := regexp.MustCompile(`\$\{([^}]+)\}`)
+	content = re1.ReplaceAllStringFunc(content, func(match string) string {
+		varName := strings.TrimPrefix(strings.TrimSuffix(match, "}"), "${")
+		if value := os.Getenv(varName); value != "" {
+			return value
+		}
+		return match // Keep original if env var not found
+	})
+
+	// Replace $VAR_NAME format (word boundary)
+	re2 := regexp.MustCompile(`\$([A-Z_][A-Z0-9_]*)\b`)
+	content = re2.ReplaceAllStringFunc(content, func(match string) string {
+		varName := strings.TrimPrefix(match, "$")
+		if value := os.Getenv(varName); value != "" {
+			return value
+		}
+		return match // Keep original if env var not found
+	})
+
+	return content
 }
 
 // validateConfig performs basic validation on the configuration

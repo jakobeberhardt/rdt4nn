@@ -7,7 +7,6 @@ import (
 )
 
 func TestLoadConfig(t *testing.T) {
-	// Create a test config file
 	testConfig := `
 benchmark:
   name: test_benchmark

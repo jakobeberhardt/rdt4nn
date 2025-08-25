@@ -6,29 +6,29 @@ benchmark:
     implementation: adaptive  # Use adaptive scheduler
     rdt: true  # Enable Intel RDT support
   data:
-    profilefrequency: 100  # Profile every 100ms
+    profilefrequency: 100  
     db:
-      host: localhost:8086  # InfluxDB host
-      name: benchmarks      # Database name
-      user: jakob
-      password: "123"
-    rdt: true         # Collect RDT metrics
-    perf: true        # Collect perf metrics
-    dockerstats: true # Collect Docker stats
+      host: ${INFLUXDB_HOST}  
+      name: ${INFLUXDB_BUCKET}      
+      user: ${INFLUXDB_USER}
+      password: ${INFLUXDB_TOKEN}
+    rdt: true         
+    perf: true        
+    dockerstats: true 
   docker:
     auth:
-      registry: registry.jakob-eberhardt.de
-      username: jakob
-      password: "123"
+      registry: ${DOCKER_REGISTRY_HOST}
+      username: ${DOCKER_REGISTRY_USERNAME}
+      password: ${DOCKER_REGISTRY_PASSWORD}
 
 # Container definitions
 container0:
   index: 0
   image: registry.jakob-eberhardt.de/redis:7
   port: "6379:6379"
-  start: 0    # Start immediately
-  stop: -1    # Run until benchmark ends
-  core: 1     # Pin to CPU core 1
+  start: 0    
+  stop: -1    
+  core: 1     
   env:
     REDIS_MAXMEMORY: "256mb"
     REDIS_MAXMEMORY_POLICY: "allkeys-lru"
@@ -37,9 +37,9 @@ container1:
   index: 1
   image: registry.jakob-eberhardt.de/redis:7
   port: "6379:6380"
-  start: 15   # Start after 15 seconds
-  stop: -1    # Run until benchmark ends
-  core: 2     # Pin to CPU core 2
+  start: 15   
+  stop: -1    
+  core: 2     
   env:
     REDIS_MAXMEMORY: "256mb"
     REDIS_MAXMEMORY_POLICY: "allkeys-lru"
@@ -48,9 +48,9 @@ container2:
   index: 2
   image: registry.jakob-eberhardt.de/nginx:latest
   port: "80:8080"
-  start: 30   # Start after 30 seconds
-  stop: 270   # Stop 30 seconds before benchmark ends
-  core: 3     # Pin to CPU core 3
+  start: 30   
+  stop: 270   
+  core: 3     
   env:
     NGINX_WORKER_PROCESSES: "1"
     NGINX_WORKER_CONNECTIONS: "1024"

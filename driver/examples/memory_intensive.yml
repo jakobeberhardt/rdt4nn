@@ -8,18 +8,18 @@ benchmark:
   data:
     profilefrequency: 50   # High frequency profiling (50ms)
     db:
-      host: localhost:8086
-      name: benchmarks
-      user: jakob
-      password: "123"
+      host: ${INFLUXDB_HOST}
+      name: ${INFLUXDB_BUCKET}
+      user: ${INFLUXDB_USER}
+      password: ${INFLUXDB_TOKEN}
     rdt: true
     perf: true
     dockerstats: true
   docker:
     auth:
-      registry: registry.jakob-eberhardt.de
-      username: jakob
-      password: "123"
+      registry: ${DOCKER_REGISTRY_HOST}
+      username: ${DOCKER_REGISTRY_USERNAME}
+      password: ${DOCKER_REGISTRY_PASSWORD}
 
 # Memory-intensive workloads to study busy neighbor effects
 container0:
