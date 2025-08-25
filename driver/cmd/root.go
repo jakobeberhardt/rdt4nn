@@ -83,8 +83,6 @@ func runBenchmark(cmd *cobra.Command, args []string) {
 		log.WithError(err).Fatal("Benchmark execution failed")
 		os.Exit(1)
 	}
-
-	log.Info("Benchmark completed successfully")
 }
 
 func init() {

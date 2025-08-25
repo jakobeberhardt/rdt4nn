@@ -182,12 +182,12 @@ func (r *Runner) execute() error {
 	// Wait for benchmark completion or manual termination
 	r.waitForCompletion()
 
+	r.endTime = time.Now()
 	log.Info("Execution phase completed")
 	return nil
 }
 
 func (r *Runner) startContainersScheduled() error {
-	// Create a map of start times to containers
 	startSchedule := make(map[int][]string)
 	for name, containerCfg := range r.config.Container {
 		startSchedule[containerCfg.Start] = append(startSchedule[containerCfg.Start], name)
@@ -222,7 +222,6 @@ func (r *Runner) startContainersScheduled() error {
 			}
 		}
 
-		// Check if we need to continue
 		if len(startSchedule) == 0 || startTime > r.getMaxStartTime() {
 			break
 		}
@@ -237,7 +236,6 @@ func (r *Runner) startContainersScheduled() error {
 	return nil
 }
 
-// waitForCompletion waits for benchmark completion based on configuration
 func (r *Runner) waitForCompletion() {
 	if r.config.Benchmark.MaxT == -1 {
 		log.Info("Benchmark set to run indefinitely, waiting for manual termination")
@@ -255,11 +253,9 @@ func (r *Runner) waitForCompletion() {
 		}
 	}
 
-	// Wait for all goroutines to finish
 	r.wg.Wait()
 }
 
-// cleanup handles the cleanup phase
 func (r *Runner) cleanup() error {
 	log.Info("Entering cleanup phase")
 
@@ -287,15 +283,20 @@ func (r *Runner) cleanup() error {
 
 	if len(errors) > 0 {
 		log.WithField("error_count", len(errors)).Warn("Cleanup completed with some warnings")
-		// Still return an error for logging purposes, but the main function should handle this gracefully
 		return fmt.Errorf("cleanup completed with %d warnings", len(errors))
 	}
 
 	log.Info("Cleanup phase completed successfully")
+	
+	log.WithFields(log.Fields{
+		"benchmark_id":        r.benchmarkID,
+		"benchmark_id_number": r.benchmarkIDNum,
+		"duration":            r.endTime.Sub(r.startTime),
+	}).Info("Benchmark completed successfully")
+	
 	return nil
 }
 
-// setupSignalHandling sets up graceful shutdown on interrupt signals
 func (r *Runner) setupSignalHandling() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -307,7 +308,6 @@ func (r *Runner) setupSignalHandling() {
 	}()
 }
 
-// getMaxStartTime returns the maximum start time from all containers
 func (r *Runner) getMaxStartTime() int {
 	maxStartTime := 0
 	for _, containerCfg := range r.config.Container {
@@ -318,11 +318,9 @@ func (r *Runner) getMaxStartTime() int {
 	return maxStartTime
 }
 
-// convertContainerConfigs converts the container config map to the format expected by comprehensive profiler
 func convertContainerConfigs(containers map[string]config.ContainerConfig) map[string]*config.ContainerConfig {
 	result := make(map[string]*config.ContainerConfig)
 	for name, cfg := range containers {
-		// Create a copy to avoid pointer issues
 		containerCfg := cfg
 		result[name] = &containerCfg
 	}

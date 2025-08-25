@@ -1,6 +1,6 @@
 benchmark:
   name: simple_test
-  max_t: 5 
+  max_t: 20
   log_level: debug
   scheduler:
     implementation: default  # Use default scheduler
@@ -20,11 +20,11 @@ container0:
   index: 0
   image: nginx:alpine
   start: 0
-  stop: 5
+  stop: 20
   core: 0
 container1:
   index: 1
   image: nginx:alpine
   start: 0
-  stop: 5
+  stop: 20
   core: 0

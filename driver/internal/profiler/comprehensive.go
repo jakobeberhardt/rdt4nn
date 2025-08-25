@@ -124,15 +124,12 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 
 	relativeTime := timestamp.Sub(pm.startTime).Milliseconds()
 	
-	// Get current CPU where this process is running
 	currentCPU := runtime.NumCPU() 
 
-	// Collect raw data from all collectors
 	dockerData := make(map[string]*storage.DockerData)
 	perfData := make(map[string]*storage.PerfData)
 	rdtData := make(map[string]*storage.RDTData)
 
-	// Collect Docker stats
 	for _, collector := range pm.collectors {
 		measurements, err := collector.Collect(ctx, timestamp)
 		if err != nil {
@@ -140,7 +137,6 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 			continue
 		}
 
-		// Parse measurements based on collector type
 		switch collector.Name() {
 		case "docker_stats":
 			dockerData = pm.parseDockerMeasurements(measurements)
@@ -151,13 +147,23 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 		}
 	}
 
-	// Create comprehensive metrics for each container
 	for containerName, containerID := range containerIDs {
 		containerConfig, exists := pm.containerConfigs[containerName]
 		if !exists {
 			log.WithField("container", containerName).Warn("Container config not found")
 			continue
 		}
+
+		shortContainerID := containerID[:12]
+		dockerMetrics := dockerData[shortContainerID] 
+		
+		log.WithFields(log.Fields{
+			"container_name":       containerName,
+			"full_container_id":    containerID,
+			"short_container_id":   shortContainerID,
+			"docker_data_found":    dockerMetrics != nil,
+			"available_docker_keys": fmt.Sprintf("%v", getKeys(dockerData)),
+		}).Debug("Looking up Docker metrics for container")
 
 		metrics := &storage.BenchmarkMetrics{
 			BenchmarkID:       pm.benchmarkIDNum,
@@ -176,7 +182,7 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 			SamplingStep:  step,
 			CPUExecutedOn: currentCPU,
 
-			DockerMetrics: dockerData[containerID],
+			DockerMetrics: dockerMetrics, // Use the corrected lookup
 			PerfMetrics:   perfData[containerName], // Perf might use container name
 			RDTMetrics:    rdtData[containerName],  // RDT might use container name
 		}
@@ -190,31 +196,111 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 func (pm *ComprehensiveManager) parseDockerMeasurements(measurements []storage.Measurement) map[string]*storage.DockerData {
 	result := make(map[string]*storage.DockerData)
 	
+	// Group measurements by container ID
 	for _, measurement := range measurements {
 		containerID := measurement.Tags["container_id"]
 		if containerID == "" {
 			continue
 		}
 
-		dockerData := &storage.DockerData{}
+		// Initialize docker data for this container if not exists
+		if _, exists := result[containerID]; !exists {
+			result[containerID] = &storage.DockerData{}
+		}
 		
-		if val, ok := measurement.Fields["cpu_usage_percent"].(float64); ok {
-			dockerData.CPUUsagePercent = val
+		dockerData := result[containerID]
+		
+		// Parse based on measurement name
+		switch measurement.Name {
+		case "cpu_usage_percent":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.CPUUsagePercent = val
+			}
+		case "cpu_usage_total":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.CPUUsageTotal = uint64(val)
+			}
+		case "cpu_usage_kernel":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.CPUUsageKernel = uint64(val)
+			}
+		case "cpu_usage_user":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.CPUUsageUser = uint64(val)
+			}
+		case "cpu_throttling":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.CPUThrottling = uint64(val)
+			}
+		case "memory_usage_bytes":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.MemoryUsage = uint64(val)
+			}
+		case "memory_limit":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.MemoryLimit = uint64(val)
+			}
+		case "memory_usage_percent":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.MemoryUsagePercent = val
+			}
+		case "memory_cache":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.MemoryCache = uint64(val)
+			}
+		case "memory_rss":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.MemoryRSS = uint64(val)
+			}
+		case "memory_swap":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.MemorySwap = uint64(val)
+			}
+		case "network_rx_bytes":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.NetworkRxBytes = uint64(val)
+			}
+		case "network_tx_bytes":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.NetworkTxBytes = uint64(val)
+			}
+		case "network_rx_packets":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.NetworkRxPackets = uint64(val)
+			}
+		case "network_tx_packets":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.NetworkTxPackets = uint64(val)
+			}
+		case "disk_read_bytes":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.DiskReadBytes = uint64(val)
+			}
+		case "disk_write_bytes":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.DiskWriteBytes = uint64(val)
+			}
+		case "disk_read_ops":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.DiskReadOps = uint64(val)
+			}
+		case "disk_write_ops":
+			if val, ok := measurement.Fields["value"].(float64); ok {
+				dockerData.DiskWriteOps = uint64(val)
+			}
 		}
-		if val, ok := measurement.Fields["memory_usage"].(uint64); ok {
-			dockerData.MemoryUsage = val
-		}
-		if val, ok := measurement.Fields["memory_limit"].(uint64); ok {
-			dockerData.MemoryLimit = val
-		}
-		if val, ok := measurement.Fields["memory_usage_percent"].(float64); ok {
-			dockerData.MemoryUsagePercent = val
-		}
-
-		result[containerID] = dockerData
 	}
 	
 	return result
+}
+
+// Helper function to get keys from a map for debugging
+func getKeys(m map[string]*storage.DockerData) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func (pm *ComprehensiveManager) parsePerfMeasurements(measurements []storage.Measurement) map[string]*storage.PerfData {
