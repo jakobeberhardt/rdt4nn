@@ -131,6 +131,9 @@ func NewRunnerWithOptions(cfg *config.Config, configFilePath string, printMetaDa
 func (r *Runner) Run() error {
 	r.startTime = time.Now()
 	
+	// Reset storage byte counter for this benchmark run
+	r.storageMgr.ResetBytesCounter()
+	
 	log.WithFields(log.Fields{
 		"benchmark_id": r.benchmarkID,
 		"start_time":   r.startTime,
@@ -489,17 +492,36 @@ func (r *Runner) writeMetadata() error {
 // printBasicSummary prints a concise summary of the benchmark execution
 func (r *Runner) printBasicSummary() {
 	duration := r.endTime.Sub(r.startTime)
+	totalBytes := r.storageMgr.GetTotalBytesWritten()
+	dataSizeFormatted := r.storageMgr.FormatDataSize(totalBytes)
+	
+	// Split into multiple log messages for better readability
+	log.WithFields(log.Fields{
+		"benchmark_id":   r.benchmarkIDNum,
+		"benchmark_name": r.config.Benchmark.Name,
+	}).Infof("Benchmark '%s' with ID %d completed in %v", 
+		r.config.Benchmark.Name,
+		r.benchmarkIDNum,
+		duration.Round(time.Second))
+	
+	totalMeasurements := int64(0)
+	if r.metadata != nil {
+		totalMeasurements = r.metadata.TotalMeasurements
+	}
 	
 	log.WithFields(log.Fields{
-		"benchmark_id":     r.benchmarkIDNum,
-		"benchmark_name":   r.config.Benchmark.Name,
-		"duration_seconds": duration.Seconds(),
-		"total_containers": len(r.config.Container),
-	}).Infof("Benchmark '%s' completed in %v (ID: %d, Containers: %d) - Use --print-meta-data flag for detailed metadata", 
-		r.config.Benchmark.Name,
-		duration.Round(time.Second),
-		r.benchmarkIDNum,
-		len(r.config.Container))
+		"total_containers":   len(r.config.Container),
+		"total_measurements": totalMeasurements,
+	}).Infof("Total Containers: %d, Total Measurements: %d", 
+		len(r.config.Container), 
+		totalMeasurements)
+	
+	log.WithFields(log.Fields{
+		"data_saved_bytes": totalBytes,
+		"data_size_formatted": dataSizeFormatted,
+	}).Infof("Data Saved: %s", dataSizeFormatted)
+	
+	log.Info("Use --print-meta-data flag for detailed metadata")
 }
 
 // printBenchmarkMetadata prints comprehensive metadata about the benchmark execution
@@ -511,6 +533,8 @@ func (r *Runner) printBenchmarkMetadata() {
 
 	metadata := r.metadata
 	duration := r.endTime.Sub(r.startTime)
+	totalBytes := r.storageMgr.GetTotalBytesWritten()
+	dataSizeFormatted := r.storageMgr.FormatDataSize(totalBytes)
 
 	fmt.Println()
 	fmt.Println("=============================================================================")
@@ -585,6 +609,7 @@ func (r *Runner) printBenchmarkMetadata() {
 	fmt.Printf("   Host:                  %s\n", metadata.DatabaseHost)
 	fmt.Printf("   Database:              %s\n", metadata.DatabaseName)
 	fmt.Printf("   User:                  %s\n", metadata.DatabaseUser)
+	fmt.Printf("   Data Saved to DB:      %s (%d bytes)\n", dataSizeFormatted, totalBytes)
 	fmt.Println()
 	
 	// Configuration File Content (truncated for readability)
@@ -619,5 +644,6 @@ func (r *Runner) printBenchmarkMetadata() {
 		"total_measurements":   metadata.TotalMeasurements,
 		"used_scheduler":       metadata.UsedScheduler,
 		"config_file_path":     metadata.ConfigFilePath,
+		"data_saved_bytes":     totalBytes,
 	}).Info("Benchmark metadata summary")
 }

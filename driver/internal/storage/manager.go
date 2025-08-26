@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
@@ -14,10 +15,11 @@ import (
 
 // Manager handles data storage operations
 type Manager struct {
-	client   influxdb2.Client
-	writeAPI api.WriteAPI
-	config   config.DBConfig
-	org      string
+	client           influxdb2.Client
+	writeAPI         api.WriteAPI
+	config           config.DBConfig
+	org              string
+	totalBytesWritten int64  
 }
 
 // Measurement represents a data point to be stored
@@ -91,10 +93,58 @@ func NewManager(config config.DBConfig) (*Manager, error) {
 	return sm, nil
 }
 
+// calculateLineProtocolSize estimates the size of a measurement in InfluxDB line protocol format
+func (sm *Manager) calculateLineProtocolSize(m Measurement) int64 {
+	// InfluxDB line protocol format: measurement,tag1=value1,tag2=value2 field1=value1,field2=value2 timestamp
+	size := int64(len(m.Name))
+	
+	// Add tags size
+	for key, value := range m.Tags {
+		size += int64(len(key) + len(value) + 2) // +2 for '=' and ','
+	}
+	
+	// Add fields size
+	fieldCount := 0
+	for key, value := range m.Fields {
+		if fieldCount > 0 {
+			size += 1 // comma separator
+		}
+		size += int64(len(key) + 1) // +1 for '='
+		
+		switch v := value.(type) {
+		case string:
+			size += int64(len(v) + 2) // +2 for quotes
+		case int, int8, int16, int32, int64:
+			size += int64(len(fmt.Sprintf("%d", v)))
+		case uint, uint8, uint16, uint32, uint64:
+			size += int64(len(fmt.Sprintf("%d", v)))
+		case float32, float64:
+			size += int64(len(fmt.Sprintf("%.6f", v)))
+		case bool:
+			if v {
+				size += 4 // "true"
+			} else {
+				size += 5 // "false"
+			}
+		default:
+			size += int64(len(fmt.Sprintf("%v", v)))
+		}
+		fieldCount++
+	}
+	
+	size += 20
+	
+	size += 3
+	
+	return size
+}
+
 func (sm *Manager) WriteMeasurements(ctx context.Context, measurements []Measurement) error {
 	if len(measurements) == 0 {
 		return nil
 	}
+
+	var totalSize int64
 
 	// Convert measurements to InfluxDB points
 	for _, measurement := range measurements {
@@ -105,10 +155,18 @@ func (sm *Manager) WriteMeasurements(ctx context.Context, measurements []Measure
 			measurement.Timestamp,
 		)
 		
+		lineProtocolSize := sm.calculateLineProtocolSize(measurement)
+		totalSize += lineProtocolSize
+		
 		sm.writeAPI.WritePoint(point)
 	}
 
-	log.WithField("count", len(measurements)).Debug("Measurements written to storage")
+	atomic.AddInt64(&sm.totalBytesWritten, totalSize)
+
+	log.WithFields(log.Fields{
+		"count":      len(measurements),
+		"bytes_size": totalSize,
+	}).Debug("Measurements written to storage")
 	return nil
 }
 
@@ -284,4 +342,34 @@ func (sm *Manager) WriteBenchmarkMetadata(ctx context.Context, metadata *Benchma
 	}).Info("Writing benchmark metadata to storage")
 
 	return sm.WriteMeasurement(ctx, measurement)
+}
+
+// GetTotalBytesWritten returns the total number of bytes written during this benchmark session
+func (sm *Manager) GetTotalBytesWritten() int64 {
+	return atomic.LoadInt64(&sm.totalBytesWritten)
+}
+
+// ResetBytesCounter resets the byte counter (call at the start of a new benchmark)
+func (sm *Manager) ResetBytesCounter() {
+	atomic.StoreInt64(&sm.totalBytesWritten, 0)
+}
+
+// FormatDataSize formats bytes into a human-readable format (KB, MB, GB)
+func (sm *Manager) FormatDataSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d bytes", bytes)
+	}
 }
