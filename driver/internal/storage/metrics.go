@@ -300,15 +300,9 @@ func (sm *Manager) WriteBenchmarkMetrics(ctx context.Context, metrics *Benchmark
 	}
 
 	fields := map[string]interface{}{
-		// Core benchmark metadata fields
-		"benchmark_id":        metrics.BenchmarkID,
-		"container_name":      metrics.ContainerName,
-		"container_index":     metrics.ContainerIndex, 
-		"container_image":     metrics.ContainerImage,
 		"container_core":      metrics.ContainerCore,
 		"sampling_frequency":  metrics.SamplingFrequency,
 		"sampling_step":       metrics.SamplingStep,
-		"used_scheduler":      metrics.UsedScheduler,
 		"relative_time_ms":    metrics.RelativeTime,
 		"cpu_executed_on":     metrics.CPUExecutedOn,
 		"benchmark_started":   metrics.BenchmarkStarted.Unix(),
@@ -328,10 +322,9 @@ func (sm *Manager) WriteBenchmarkMetrics(ctx context.Context, metrics *Benchmark
 	if metrics.PerfMetrics != nil {
 		addPerfFields(fields, metrics.PerfMetrics)
 	} else {
-		addPerfFields(fields, &PerfData{}) // Add with zero values
+		addPerfFields(fields, &PerfData{}) 
 	}
 
-	// Add RDT metrics (always add fields, even if struct is nil)
 	if metrics.RDTMetrics != nil {
 		addRDTFields(fields, metrics.RDTMetrics)
 	} else {
