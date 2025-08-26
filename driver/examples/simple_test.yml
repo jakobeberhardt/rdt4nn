@@ -7,7 +7,7 @@ benchmark:
     implementation: default  # Use default scheduler
     rdt: false  # Disable RDT for simplicity
   data:
-    profilefrequency: 500  # Profile every 500ms
+    profilefrequency: 500  # Profile every 50ms
     db:
       host: ${INFLUXDB_HOST}
       name: ${INFLUXDB_BUCKET}
