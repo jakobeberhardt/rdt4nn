@@ -9,6 +9,70 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// BenchmarkMetadata represents the complete metadata for a benchmark run
+type BenchmarkMetadata struct {
+	// Core benchmark identification
+	BenchmarkID       int64     `json:"benchmark_id"`
+	BenchmarkName     string    `json:"benchmark_name"`
+	BenchmarkStarted  time.Time `json:"benchmark_started"`
+	BenchmarkFinished time.Time `json:"benchmark_finished,omitempty"`
+	
+	// Execution environment
+	ExecutionHost     string    `json:"execution_host"`
+	CPUExecutedOn     int       `json:"cpu_executed_on"`
+	TotalCPUCores     int       `json:"total_cpu_cores"`
+	OSInfo           string    `json:"os_info"`
+	KernelVersion    string    `json:"kernel_version"`
+	
+	// System information
+	DriverVersion     string    `json:"driver_version"`
+	BuildDate         string    `json:"build_date"`
+	CPUModel          string    `json:"cpu_model"`
+	CPUVendor         string    `json:"cpu_vendor"`
+	CPUThreads        int       `json:"cpu_threads"`
+	Architecture      string    `json:"architecture"`
+	Hostname          string    `json:"hostname"`
+	Description       string    `json:"description"`
+	SchedulerVersion  string    `json:"scheduler_version"`
+	
+	// Configuration
+	ConfigFile        string    `json:"config_file"`        // Original YAML content (with secrets unexpanded)
+	ConfigFilePath    string    `json:"config_file_path"`   // Path to config file
+	UsedScheduler     string    `json:"used_scheduler"`
+	SamplingFrequency int       `json:"sampling_frequency_ms"`
+	MaxDuration       int       `json:"max_duration_seconds"`
+	
+	// Data collection settings
+	RDTEnabled        bool      `json:"rdt_enabled"`
+	PerfEnabled       bool      `json:"perf_enabled"`
+	DockerStatsEnabled bool     `json:"docker_stats_enabled"`
+	
+	// Container information
+	TotalContainers   int                      `json:"total_containers"`
+	ContainerImages   map[string]int          `json:"container_images"`     // image -> count
+	ContainerDetails  map[string]ContainerMeta `json:"container_details"`   // name -> details
+	
+	// Results summary
+	TotalSamplingSteps int64     `json:"total_sampling_steps"`
+	TotalMeasurements  int64     `json:"total_measurements"`
+	TotalDataSize      int64     `json:"total_data_size_bytes"`
+	
+	// Database information
+	DatabaseHost       string    `json:"database_host"`
+	DatabaseName       string    `json:"database_name"`
+	DatabaseUser       string    `json:"database_user"`
+}
+
+// ContainerMeta represents metadata for a single container
+type ContainerMeta struct {
+	Index     int               `json:"index"`
+	Image     string            `json:"image"`
+	StartTime int               `json:"start_time"`
+	StopTime  int               `json:"stop_time"`
+	CorePin   int               `json:"core_pin"`
+	EnvVars   map[string]string `json:"env_vars,omitempty"`
+}
+
 // BenchmarkMetrics represents a comprehensive data point for a container at a specific time
 type BenchmarkMetrics struct {
 	// Benchmark-level metadata
@@ -171,19 +235,7 @@ func (sm *Manager) GetNextBenchmarkID(ctx context.Context) (int64, error) {
 		return 1, nil
 	}
 
-	log.WithField("query_results_count", len(results)).Debug("Query results received")
-	if len(results) > 0 {
-		log.WithField("first_result", results[0]).Debug("First query result")
-		// Log all results to debug
-		for i, result := range results {
-			if i < 5 { // Only log first 5 results to avoid spam
-				log.WithFields(log.Fields{
-					"result_index": i,
-					"result":       result,
-				}).Debug("Query result")
-			}
-		}
-	}
+	log.WithField("query_results_count", len(results)).Debug("Queried benchmark ID records from database")
 
 	if len(results) == 0 {
 		// No previous benchmarks found, start from 1
@@ -198,11 +250,6 @@ func (sm *Manager) GetNextBenchmarkID(ctx context.Context) (int64, error) {
 	
 	for _, result := range results {
 		if value, ok := result["_value"]; ok {
-			log.WithFields(log.Fields{
-				"value":      value,
-				"value_type": fmt.Sprintf("%T", value),
-			}).Debug("Parsing benchmark ID value")
-			
 			var currentID int64
 			var parsed bool
 			

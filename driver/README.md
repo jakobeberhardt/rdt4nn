@@ -15,6 +15,12 @@ A comprehensive Go-based tool for defining, running, and profiling container-bas
   - Default: Basic CPU pinning and resource limits
   - RDT: Intel RDT-based resource isolation
   - Adaptive: Machine learning-inspired adaptive scheduling
+- **Comprehensive Metadata Capture**: Automatic collection and storage of benchmark metadata
+  - Complete configuration preservation (original YAML with secrets unexpanded)
+  - Execution environment details (host, CPU, OS, kernel)
+  - Container configuration and runtime information
+  - Data collection statistics and performance metrics
+  - Reproducibility and audit trail support
 
 ## Prerequisites
 
@@ -71,6 +77,9 @@ sudo cp rdt4nn-driver /usr/local/bin/
 
 # Run with verbose logging
 ./rdt4nn-driver -c examples/simple_test.yml -v
+
+# Run with detailed metadata reporting
+./rdt4nn-driver -c examples/simple_test.yml --print-meta-data
 ```
 
 ### Configuration File Structure

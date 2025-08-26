@@ -17,32 +17,29 @@ type Config struct {
 	Container map[string]ContainerConfig `yaml:",inline"`
 }
 
-// BenchmarkConfig contains benchmark-level settings
 type BenchmarkConfig struct {
-	Name      string          `yaml:"name"`
-	MaxT      int             `yaml:"max_t"`        // -1 for indefinite
-	LogLevel  string          `yaml:"log_level"`
-	Scheduler SchedulerConfig `yaml:"scheduler"`
-	Data      DataConfig      `yaml:"data"`
-	Docker    DockerConfig    `yaml:"docker"`
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description,omitempty"`
+	MaxT        int             `yaml:"max_t"`        
+	LogLevel    string          `yaml:"log_level"`
+	Scheduler   SchedulerConfig `yaml:"scheduler"`
+	Data        DataConfig      `yaml:"data"`
+	Docker      DockerConfig    `yaml:"docker"`
 }
 
-// SchedulerConfig defines the scheduler implementation
 type SchedulerConfig struct {
 	Implementation string `yaml:"implementation"`
 	RDT            bool   `yaml:"rdt"`
 }
 
-// DataConfig defines data collection and storage settings
 type DataConfig struct {
-	ProfileFrequency int        `yaml:"profilefrequency"` // in milliseconds
+	ProfileFrequency int        `yaml:"profilefrequency"`
 	DB               DBConfig   `yaml:"db"`
 	RDT              bool       `yaml:"rdt"`
 	Perf             bool       `yaml:"perf"`
 	DockerStats      bool       `yaml:"dockerstats"`
 }
 
-// DBConfig defines database connection settings
 type DBConfig struct {
 	Host     string `yaml:"host"`
 	Name     string `yaml:"name"`
@@ -50,19 +47,16 @@ type DBConfig struct {
 	Password string `yaml:"password"`
 }
 
-// DockerConfig defines Docker registry authentication
 type DockerConfig struct {
 	Auth AuthConfig `yaml:"auth"`
 }
 
-// AuthConfig defines registry authentication
 type AuthConfig struct {
 	Registry string `yaml:"registry"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 }
 
-// ContainerConfig defines individual container settings
 type ContainerConfig struct {
 	Index int    `yaml:"index"`
 	Image string `yaml:"image"`
@@ -75,7 +69,6 @@ type ContainerConfig struct {
 
 // LoadConfig loads and validates the benchmark configuration from a YAML file
 func LoadConfig(filename string) (*Config, error) {
-	// Load .env file from project root (relative to config file location)
 	configDir := filepath.Dir(filename)
 	envPath := filepath.Join(configDir, "..", ".env") // Assuming config is in driver/examples
 	if _, err := os.Stat(envPath); err == nil {

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
@@ -202,5 +203,85 @@ func (sm *Manager) WriteMetadata(ctx context.Context, benchmarkID string, metada
 		Timestamp: time.Now(),
 	}
 	
+	return sm.WriteMeasurement(ctx, measurement)
+}
+
+// WriteBenchmarkMetadata writes comprehensive benchmark metadata to storage
+func (sm *Manager) WriteBenchmarkMetadata(ctx context.Context, metadata *BenchmarkMetadata) error {
+	tags := map[string]string{
+		"benchmark_id":   strconv.FormatInt(metadata.BenchmarkID, 10),
+		"benchmark_name": metadata.BenchmarkName,
+		"execution_host": metadata.ExecutionHost,
+		"used_scheduler": metadata.UsedScheduler,
+		"type":          "benchmark_metadata",
+	}
+
+	fields := map[string]interface{}{
+		// Core identification
+		"benchmark_id":           metadata.BenchmarkID,
+		"benchmark_name":         metadata.BenchmarkName,
+		"benchmark_started":      metadata.BenchmarkStarted.Unix(),
+		"execution_host":         metadata.ExecutionHost,
+		"cpu_executed_on":        metadata.CPUExecutedOn,
+		"total_cpu_cores":        metadata.TotalCPUCores,
+		"os_info":               metadata.OSInfo,
+		"kernel_version":         metadata.KernelVersion,
+		
+		// System information
+		"driver_version":         metadata.DriverVersion,
+		"build_date":            metadata.BuildDate,
+		"cpu_model":             metadata.CPUModel,
+		"cpu_vendor":            metadata.CPUVendor,
+		"cpu_threads":           metadata.CPUThreads,
+		"architecture":          metadata.Architecture,
+		"hostname":              metadata.Hostname,
+		"description":           metadata.Description,
+		"scheduler_version":     metadata.SchedulerVersion,
+		
+		// Configuration
+		"config_file":           metadata.ConfigFile,
+		"config_file_path":      metadata.ConfigFilePath,
+		"used_scheduler":        metadata.UsedScheduler,
+		"sampling_frequency_ms": metadata.SamplingFrequency,
+		"max_duration_seconds":  metadata.MaxDuration,
+		
+		// Data collection settings
+		"rdt_enabled":           metadata.RDTEnabled,
+		"perf_enabled":          metadata.PerfEnabled,
+		"docker_stats_enabled":  metadata.DockerStatsEnabled,
+		
+		// Container information
+		"total_containers":      metadata.TotalContainers,
+		
+		// Results summary
+		"total_sampling_steps":  metadata.TotalSamplingSteps,
+		"total_measurements":    metadata.TotalMeasurements,
+		"total_data_size_bytes": metadata.TotalDataSize,
+		
+		// Database information
+		"database_host":         metadata.DatabaseHost,
+		"database_name":         metadata.DatabaseName,
+		"database_user":         metadata.DatabaseUser,
+	}
+
+	// Add benchmark finished if available
+	if !metadata.BenchmarkFinished.IsZero() {
+		fields["benchmark_finished"] = metadata.BenchmarkFinished.Unix()
+		fields["duration_seconds"] = metadata.BenchmarkFinished.Sub(metadata.BenchmarkStarted).Seconds()
+	}
+
+	measurement := Measurement{
+		Name:      "benchmark_meta",
+		Tags:      tags,
+		Fields:    fields,
+		Timestamp: metadata.BenchmarkStarted,
+	}
+
+	log.WithFields(log.Fields{
+		"benchmark_id":   metadata.BenchmarkID,
+		"benchmark_name": metadata.BenchmarkName,
+		"execution_host": metadata.ExecutionHost,
+	}).Info("Writing benchmark metadata to storage")
+
 	return sm.WriteMeasurement(ctx, measurement)
 }
