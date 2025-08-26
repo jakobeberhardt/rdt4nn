@@ -275,11 +275,7 @@ func (sm *Manager) WriteBenchmarkMetadata(ctx context.Context, metadata *Benchma
 	}
 
 	fields := map[string]interface{}{
-		// Core identification
-		"benchmark_id":           metadata.BenchmarkID,
-		"benchmark_name":         metadata.BenchmarkName,
 		"benchmark_started":      metadata.BenchmarkStarted.Unix(),
-		"execution_host":         metadata.ExecutionHost,
 		"cpu_executed_on":        metadata.CPUExecutedOn,
 		"total_cpu_cores":        metadata.TotalCPUCores,
 		"os_info":               metadata.OSInfo,
@@ -299,7 +295,6 @@ func (sm *Manager) WriteBenchmarkMetadata(ctx context.Context, metadata *Benchma
 		// Configuration
 		"config_file":           metadata.ConfigFile,
 		"config_file_path":      metadata.ConfigFilePath,
-		"used_scheduler":        metadata.UsedScheduler,
 		"sampling_frequency_ms": metadata.SamplingFrequency,
 		"max_duration_seconds":  metadata.MaxDuration,
 		
