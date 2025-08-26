@@ -1,5 +1,6 @@
 benchmark:
   name: simple_test
+  description: A simple test benchmark
   max_t: 20
   log_level: debug
   scheduler:

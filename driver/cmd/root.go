@@ -6,13 +6,15 @@ import (
 
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/benchmark"
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/config"
+	"github.com/jakobeberhardt/rdt4nn/driver/internal/version"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
 var (
-	configFile string
-	verbose    bool
+	configFile    string
+	verbose       bool
+	printMetaData bool
 )
 
 var rootCmd = &cobra.Command{
@@ -33,6 +35,7 @@ The tool provides:
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Path to benchmark configuration file (required)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
+	rootCmd.PersistentFlags().BoolVarP(&printMetaData, "print-meta-data", "m", false, "Print benchmark metadata at the end")
 	// Don't mark config as required globally, handle it per command
 }
 
@@ -73,7 +76,7 @@ func runBenchmark(cmd *cobra.Command, args []string) {
 	log.WithField("config", configFile).Info("Configuration loaded successfully")
 
 	// Create and run benchmark
-	benchmarkRunner, err := benchmark.NewRunner(cfg)
+	benchmarkRunner, err := benchmark.NewRunnerWithOptions(cfg, configFile, printMetaData)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to create benchmark runner")
 		os.Exit(1)
@@ -91,7 +94,7 @@ func init() {
 		Use:   "version",
 		Short: "Print the version number of rdt4nn-driver",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("rdt4nn-driver v1.0.0")
+			fmt.Println(version.GetVersionInfo())
 		},
 	}
 	rootCmd.AddCommand(versionCmd)

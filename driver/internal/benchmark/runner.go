@@ -3,8 +3,11 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -14,6 +17,8 @@ import (
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/profiler"
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/scheduler"
 	"github.com/jakobeberhardt/rdt4nn/driver/internal/storage"
+	"github.com/jakobeberhardt/rdt4nn/driver/internal/system"
+	"github.com/jakobeberhardt/rdt4nn/driver/internal/version"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -32,9 +37,18 @@ type Runner struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
+	
+	// Metadata collection
+	configFilePath string
+	printMetaData  bool
+	metadata       *storage.BenchmarkMetadata
 }
 
 func NewRunner(cfg *config.Config) (*Runner, error) {
+	return NewRunnerWithOptions(cfg, "", false)
+}
+
+func NewRunnerWithOptions(cfg *config.Config, configFilePath string, printMetaData bool) (*Runner, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	benchmarkID := fmt.Sprintf("%s_%d", cfg.Benchmark.Name, time.Now().Unix())
@@ -86,6 +100,16 @@ func NewRunner(cfg *config.Config) (*Runner, error) {
 		return nil, fmt.Errorf("failed to create scheduler: %w", err)
 	}
 
+	// Initialize metadata
+	metadata, err := createBenchmarkMetadata(cfg, configFilePath, benchmarkIDNum)
+	if err != nil {
+		log.WithError(err).Warn("Failed to create metadata, continuing without full metadata")
+		metadata = &storage.BenchmarkMetadata{
+			BenchmarkID:   benchmarkIDNum,
+			BenchmarkName: cfg.Benchmark.Name,
+		}
+	}
+
 	return &Runner{
 		config:         cfg,
 		containerMgr:   containerMgr,
@@ -97,6 +121,9 @@ func NewRunner(cfg *config.Config) (*Runner, error) {
 		samplingStep:   0,
 		ctx:            ctx,
 		cancel:         cancel,
+		configFilePath: configFilePath,
+		printMetaData:  printMetaData,
+		metadata:       metadata,
 	}, nil
 }
 
@@ -259,6 +286,9 @@ func (r *Runner) waitForCompletion() {
 func (r *Runner) cleanup() error {
 	log.Info("Entering cleanup phase")
 
+	// Finalize metadata with completion information
+	r.finalizeMetadata()
+
 	var errors []error
 
 	if err := r.profilerMgr.Stop(); err != nil {
@@ -276,9 +306,22 @@ func (r *Runner) cleanup() error {
 		errors = append(errors, fmt.Errorf("failed to finalize scheduler: %w", err))
 	}
 
+	// Write metadata to database before closing storage
+	if err := r.writeMetadata(); err != nil {
+		log.WithError(err).Warn("Failed to write metadata to storage")
+		errors = append(errors, fmt.Errorf("failed to write metadata: %w", err))
+	}
+
 	if err := r.storageMgr.Close(); err != nil {
 		log.WithError(err).Warn("Failed to close storage cleanly")
 		errors = append(errors, fmt.Errorf("failed to close storage: %w", err))
+	}
+
+	// Print metadata if requested
+	if r.printMetaData {
+		r.printBenchmarkMetadata()
+	} else {
+		r.printBasicSummary()
 	}
 
 	if len(errors) > 0 {
@@ -287,13 +330,6 @@ func (r *Runner) cleanup() error {
 	}
 
 	log.Info("Cleanup phase completed successfully")
-	
-	log.WithFields(log.Fields{
-		"benchmark_id":        r.benchmarkID,
-		"benchmark_id_number": r.benchmarkIDNum,
-		"duration":            r.endTime.Sub(r.startTime),
-	}).Info("Benchmark completed successfully")
-	
 	return nil
 }
 
@@ -325,4 +361,263 @@ func convertContainerConfigs(containers map[string]config.ContainerConfig) map[s
 		result[name] = &containerCfg
 	}
 	return result
+}
+
+// createBenchmarkMetadata creates comprehensive metadata for the benchmark
+func createBenchmarkMetadata(cfg *config.Config, configFilePath string, benchmarkIDNum int64) (*storage.BenchmarkMetadata, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	// Read original config file content (unexpanded)
+	var configFileContent string
+	if configFilePath != "" {
+		content, err := ioutil.ReadFile(configFilePath)
+		if err != nil {
+			log.WithError(err).Warn("Failed to read config file for metadata")
+			configFileContent = "Failed to read config file"
+		} else {
+			configFileContent = string(content)
+		}
+	}
+
+	// Get system information
+	cpuInfo := system.GetCPUInfo()
+	osInfo := system.GetOSInfo()
+	
+	// Get scheduler version based on implementation
+	schedulerVersion := version.GetSchedulerVersion(cfg.Benchmark.Scheduler.Implementation)
+	
+	// Build container metadata
+	containerImages := make(map[string]int)
+	containerDetails := make(map[string]storage.ContainerMeta)
+	
+	for name, container := range cfg.Container {
+		containerImages[container.Image]++
+		containerDetails[name] = storage.ContainerMeta{
+			Index:     container.Index,
+			Image:     container.Image,
+			StartTime: container.Start,
+			StopTime:  container.Stop,
+			CorePin:   container.Core,
+			EnvVars:   container.Env,
+		}
+	}
+
+	metadata := &storage.BenchmarkMetadata{
+		BenchmarkID:       benchmarkIDNum,
+		BenchmarkName:     cfg.Benchmark.Name,
+		BenchmarkStarted:  time.Now(),
+		ExecutionHost:     hostname,
+		CPUExecutedOn:     runtime.NumCPU(), // Will be updated during execution
+		TotalCPUCores:     runtime.NumCPU(),
+		OSInfo:           fmt.Sprintf("%s %s", osInfo.OS, osInfo.Architecture),
+		KernelVersion:    osInfo.Kernel,
+		// System information
+		DriverVersion:    version.Version,
+		BuildDate:       version.BuildDate,
+		CPUModel:        cpuInfo.Model,
+		CPUVendor:       cpuInfo.Vendor,
+		CPUThreads:      cpuInfo.Threads,
+		Architecture:    osInfo.Architecture,
+		Hostname:        hostname,
+		Description:     cfg.Benchmark.Description,
+		SchedulerVersion: schedulerVersion,
+		ConfigFile:       configFileContent,
+		ConfigFilePath:   configFilePath,
+		UsedScheduler:    cfg.Benchmark.Scheduler.Implementation,
+		SamplingFrequency: cfg.Benchmark.Data.ProfileFrequency,
+		MaxDuration:      cfg.Benchmark.MaxT,
+		RDTEnabled:       cfg.Benchmark.Data.RDT,
+		PerfEnabled:      cfg.Benchmark.Data.Perf,
+		DockerStatsEnabled: cfg.Benchmark.Data.DockerStats,
+		TotalContainers:  len(cfg.Container),
+		ContainerImages:  containerImages,
+		ContainerDetails: containerDetails,
+		DatabaseHost:     cfg.Benchmark.Data.DB.Host,
+		DatabaseName:     cfg.Benchmark.Data.DB.Name,
+		DatabaseUser:     cfg.Benchmark.Data.DB.User,
+	}
+
+	return metadata, nil
+}
+
+// getKernelVersion attempts to get the kernel version
+func getKernelVersion() string {
+	if runtime.GOOS == "linux" {
+		content, err := ioutil.ReadFile("/proc/version")
+		if err != nil {
+			return "unknown"
+		}
+		return string(content)
+	}
+	return runtime.GOOS + " " + runtime.GOARCH
+}
+
+// finalizeMetadata completes the metadata with execution results
+func (r *Runner) finalizeMetadata() {
+	if r.metadata == nil {
+		return
+	}
+
+	r.metadata.BenchmarkFinished = r.endTime
+	r.metadata.CPUExecutedOn = runtime.NumCPU() // Update with actual execution context
+	
+	// Get profiler statistics if available
+	if r.profilerMgr != nil {
+		// Note: You might need to add a GetStats method to the profiler manager
+		// For now, we'll set reasonable defaults
+		duration := r.endTime.Sub(r.startTime)
+		if r.metadata.SamplingFrequency > 0 {
+			expectedSamples := int64(duration.Milliseconds()) / int64(r.metadata.SamplingFrequency)
+			r.metadata.TotalSamplingSteps = expectedSamples
+			r.metadata.TotalMeasurements = expectedSamples * int64(r.metadata.TotalContainers)
+		}
+	}
+}
+
+// writeMetadata writes the metadata to the database
+func (r *Runner) writeMetadata() error {
+	if r.metadata == nil || r.storageMgr == nil {
+		return nil
+	}
+
+	return r.storageMgr.WriteBenchmarkMetadata(r.ctx, r.metadata)
+}
+
+// printBasicSummary prints a concise summary of the benchmark execution
+func (r *Runner) printBasicSummary() {
+	duration := r.endTime.Sub(r.startTime)
+	
+	log.WithFields(log.Fields{
+		"benchmark_id":     r.benchmarkIDNum,
+		"benchmark_name":   r.config.Benchmark.Name,
+		"duration_seconds": duration.Seconds(),
+		"total_containers": len(r.config.Container),
+	}).Infof("Benchmark '%s' completed in %v (ID: %d, Containers: %d) - Use --print-meta-data flag for detailed metadata", 
+		r.config.Benchmark.Name,
+		duration.Round(time.Second),
+		r.benchmarkIDNum,
+		len(r.config.Container))
+}
+
+// printBenchmarkMetadata prints comprehensive metadata about the benchmark execution
+func (r *Runner) printBenchmarkMetadata() {
+	if r.metadata == nil {
+		fmt.Println("No metadata available")
+		return
+	}
+
+	metadata := r.metadata
+	duration := r.endTime.Sub(r.startTime)
+
+	fmt.Println()
+	fmt.Println("=============================================================================")
+	fmt.Println("                           BENCHMARK METADATA                               ")
+	fmt.Println("=============================================================================")
+	fmt.Println()
+	
+	// Core Information
+	fmt.Printf("BENCHMARK IDENTIFICATION\n")
+	fmt.Printf("   Name:                  %s\n", metadata.BenchmarkName)
+	if metadata.Description != "" {
+		fmt.Printf("   Description:           %s\n", metadata.Description)
+	}
+	fmt.Printf("   ID:                    %d\n", metadata.BenchmarkID)
+	fmt.Printf("   Start Time:            %s\n", metadata.BenchmarkStarted.Format("2006-01-02 15:04:05 MST"))
+	fmt.Printf("   End Time:              %s\n", metadata.BenchmarkFinished.Format("2006-01-02 15:04:05 MST"))
+	fmt.Printf("   Duration:              %v\n", duration.Round(time.Second))
+	fmt.Println()
+	
+	// System Information
+	fmt.Printf("SYSTEM INFORMATION\n")
+	fmt.Printf("   Driver Version:        %s\n", metadata.DriverVersion)
+	fmt.Printf("   Build Date:            %s\n", metadata.BuildDate)
+	fmt.Printf("   Host:                  %s\n", metadata.Hostname)
+	fmt.Printf("   CPU Model:             %s\n", metadata.CPUModel)
+	fmt.Printf("   CPU Vendor:            %s\n", metadata.CPUVendor)
+	fmt.Printf("   CPU Cores:             %d\n", metadata.TotalCPUCores)
+	fmt.Printf("   CPU Threads:           %d\n", metadata.CPUThreads)
+	fmt.Printf("   OS:                    %s\n", metadata.OSInfo)
+	fmt.Printf("   Architecture:          %s\n", metadata.Architecture)
+	if metadata.KernelVersion != "" && len(metadata.KernelVersion) < 100 {
+		fmt.Printf("   Kernel Version:        %s\n", metadata.KernelVersion)
+	}
+	fmt.Println()
+	
+	// Configuration
+	fmt.Printf("CONFIGURATION\n")
+	fmt.Printf("   Config File:           %s\n", metadata.ConfigFilePath)
+	fmt.Printf("   Scheduler:             %s\n", metadata.UsedScheduler)
+	fmt.Printf("   Scheduler Version:     %s\n", metadata.SchedulerVersion)
+	fmt.Printf("   Sampling Frequency:    %d ms\n", metadata.SamplingFrequency)
+	if metadata.MaxDuration == -1 {
+		fmt.Printf("   Max Duration:          Indefinite\n")
+	} else {
+		fmt.Printf("   Max Duration:          %d seconds\n", metadata.MaxDuration)
+	}
+	fmt.Println()
+	
+	// Data Collection
+	fmt.Printf("DATA COLLECTION\n")
+	fmt.Printf("   RDT Enabled:           %t\n", metadata.RDTEnabled)
+	fmt.Printf("   Perf Enabled:          %t\n", metadata.PerfEnabled)
+	fmt.Printf("   Docker Stats Enabled:  %t\n", metadata.DockerStatsEnabled)
+	fmt.Printf("   Total Sampling Steps:  %d\n", metadata.TotalSamplingSteps)
+	fmt.Printf("   Total Measurements:    %d\n", metadata.TotalMeasurements)
+	if metadata.TotalDataSize > 0 {
+		fmt.Printf("   Total Data Size:       %.2f MB\n", float64(metadata.TotalDataSize)/(1024*1024))
+	}
+	fmt.Println()
+	
+	// Container Information
+	fmt.Printf("CONTAINERS\n")
+	fmt.Printf("   Total Containers:      %d\n", metadata.TotalContainers)
+	fmt.Printf("   Images Used:\n")
+	for image, count := range metadata.ContainerImages {
+		fmt.Printf("     - %s: %d container(s)\n", image, count)
+	}
+	fmt.Println()
+	
+	// Database Information
+	fmt.Printf("DATABASE\n")
+	fmt.Printf("   Host:                  %s\n", metadata.DatabaseHost)
+	fmt.Printf("   Database:              %s\n", metadata.DatabaseName)
+	fmt.Printf("   User:                  %s\n", metadata.DatabaseUser)
+	fmt.Println()
+	
+	// Configuration File Content (truncated for readability)
+	if metadata.ConfigFile != "" {
+		fmt.Printf("ORIGINAL CONFIGURATION\n")
+		lines := strings.Split(metadata.ConfigFile, "\n")
+		maxLines := 20
+		if len(lines) > maxLines {
+			for i := 0; i < maxLines; i++ {
+				fmt.Printf("   %s\n", lines[i])
+			}
+			fmt.Printf("   ... (%d more lines)\n", len(lines)-maxLines)
+		} else {
+			for _, line := range lines {
+				fmt.Printf("   %s\n", line)
+			}
+		}
+		fmt.Println()
+	}
+	
+	fmt.Println("=============================================================================")
+	fmt.Println()
+	
+	// Also log structured metadata for programmatic access
+	log.WithFields(log.Fields{
+		"benchmark_id":         metadata.BenchmarkID,
+		"benchmark_name":       metadata.BenchmarkName,
+		"execution_host":       metadata.ExecutionHost,
+		"duration_seconds":     duration.Seconds(),
+		"total_containers":     metadata.TotalContainers,
+		"total_sampling_steps": metadata.TotalSamplingSteps,
+		"total_measurements":   metadata.TotalMeasurements,
+		"used_scheduler":       metadata.UsedScheduler,
+		"config_file_path":     metadata.ConfigFilePath,
+	}).Info("Benchmark metadata summary")
 }
