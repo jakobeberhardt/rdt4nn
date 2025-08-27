@@ -1,31 +1,56 @@
 benchmark:
-  name: simple_test
-  description: A simple test benchmark
-  max_t: 20
+  name: Test
+  description: A simple test benchmark which installs packages
+  max_t: 10
   log_level: debug
   scheduler:
     implementation: default  # Use default scheduler
     rdt: false  # Disable RDT for simplicity
   data:
-    profilefrequency: 500  # Profile every 50ms
+    profilefrequency: 50  # Profile every 50ms
     db:
       host: ${INFLUXDB_HOST}
       name: ${INFLUXDB_BUCKET}
       user: ${INFLUXDB_USER}
-      password: ${INFLUXDB_TOKEN}  
+      password: ${INFLUXDB_TOKEN}
+      org: ${INFLUXDB_ORG}  
     rdt: false
-    perf: false
+    perf: true
     dockerstats: true
 
 container0:
   index: 0
   image: nginx:alpine
   start: 0
-  stop: 20
   core: 0
+  command: "sleep 5 && apk add firefox"
 container1:
   index: 1
   image: nginx:alpine
   start: 0
-  stop: 20
   core: 0
+  command: "sleep 15 && apk add firefox"
+container2:
+  index: 2
+  image: nginx:alpine
+  start: 0
+  core: 0
+  command: "sleep 30 && apk add firefox"
+container3:
+  index: 3
+  image: nginx:alpine
+  start: 0
+  core: 0
+  command: "sleep 45 && apk add firefox"
+container4:
+  index: 4
+  image: nginx:alpine
+  start: 0
+  core: 0
+  command: "sleep 60 && apk add firefox"
+container5:
+  index: 5
+  image: nginx:alpine
+  start: 0
+  core: 0
+  command: "sleep 75 && apk add firefox"
