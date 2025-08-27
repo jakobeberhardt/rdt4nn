@@ -34,7 +34,10 @@ type Measurement struct {
 func NewManager(config config.DBConfig) (*Manager, error) {
 	// Use the token from password field for InfluxDB 2.x authentication
 	token := config.Password
-	org := "rdt4nn" // Default organization for RDT4NN
+	org := config.Org
+	if org == "" {
+		org = "rdt4nn" // Default organization for RDT4NN
+	}
 	
 	if config.User != "" && config.Password != "" {
 		log.WithField("user", config.User).Info("InfluxDB authentication configured")
@@ -275,6 +278,7 @@ func (sm *Manager) WriteBenchmarkMetadata(ctx context.Context, metadata *Benchma
 	}
 
 	fields := map[string]interface{}{
+		"benchmark_id":           metadata.BenchmarkID,
 		"benchmark_started":      metadata.BenchmarkStarted.Unix(),
 		"cpu_executed_on":        metadata.CPUExecutedOn,
 		"total_cpu_cores":        metadata.TotalCPUCores,

@@ -249,6 +249,23 @@ func (r *Runner) startContainersScheduled() error {
 						log.WithError(err).WithField("container", containerName).Warn("Failed to apply scheduler policy")
 					}
 				}
+
+				// Execute optional command if specified
+				containerConfig := r.config.Container[containerName]
+				if containerConfig.Command != "" {
+					log.WithFields(log.Fields{
+						"container": containerName,
+						"command":   containerConfig.Command,
+					}).Info("Executing command in container")
+
+					if err := r.containerMgr.ExecuteCommand(r.ctx, containerName, containerConfig.Command); err != nil {
+						log.WithError(err).WithFields(log.Fields{
+							"container": containerName,
+							"command":   containerConfig.Command,
+						}).Warn("Failed to execute command in container")
+						// Continue with other containers even if command execution fails
+					}
+				}
 			}
 		}
 
@@ -405,6 +422,7 @@ func createBenchmarkMetadata(cfg *config.Config, configFilePath string, benchmar
 			StopTime:  container.Stop,
 			CorePin:   container.Core,
 			EnvVars:   container.Env,
+			Command:   container.Command,
 		}
 	}
 

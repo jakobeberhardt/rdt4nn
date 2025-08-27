@@ -45,6 +45,7 @@ type DBConfig struct {
 	Name     string `yaml:"name"`
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
+	Org      string `yaml:"org,omitempty"` // InfluxDB 2.x organization
 }
 
 type DockerConfig struct {
@@ -58,29 +59,40 @@ type AuthConfig struct {
 }
 
 type ContainerConfig struct {
-	Index int    `yaml:"index"`
-	Image string `yaml:"image"`
-	Port  string `yaml:"port,omitempty"`
-	Start int    `yaml:"start"` // start time in seconds
-	Stop  int    `yaml:"stop"`  // stop time in seconds, -1 for manual stop
-	Core  int    `yaml:"core,omitempty"` // CPU core to pin to
-	Env   map[string]string `yaml:"env,omitempty"` // Environment variables
+	Index   int               `yaml:"index"`
+	Image   string            `yaml:"image"`
+	Port    string            `yaml:"port,omitempty"`
+	Start   int               `yaml:"start"` // start time in seconds
+	Stop    int               `yaml:"stop"`  // stop time in seconds, -1 for manual stop
+	Core    int               `yaml:"core,omitempty"` // CPU core to pin to
+	Env     map[string]string `yaml:"env,omitempty"` // Environment variables
+	Command string            `yaml:"command,omitempty"` // Optional command to execute in container
 }
 
 // LoadConfig loads and validates the benchmark configuration from a YAML file
 func LoadConfig(filename string) (*Config, error) {
 	configDir := filepath.Dir(filename)
-	envPath := filepath.Join(configDir, "..", ".env") // Assuming config is in driver/examples
-	if _, err := os.Stat(envPath); err == nil {
-		if err := godotenv.Load(envPath); err != nil {
-			return nil, fmt.Errorf("failed to load .env file: %w", err)
+	
+	// Try multiple locations for .env file
+	envPaths := []string{
+		filepath.Join(configDir, "..", ".env"), // examples/../.env (from examples to project root)
+		filepath.Join("..", ".env"),            // ../env (from driver to project root)  
+		".env",                                 // current directory
+	}
+	
+	var envLoaded bool
+	for _, envPath := range envPaths {
+		if _, err := os.Stat(envPath); err == nil {
+			if err := godotenv.Load(envPath); err != nil {
+				return nil, fmt.Errorf("failed to load .env file: %w", err)
+			}
+			envLoaded = true
+			break
 		}
-	} else {
-		// Try loading from current directory
-		if err := godotenv.Load(); err != nil {
-			// .env file is optional, just log and continue
-			fmt.Printf("Warning: No .env file found (this is optional)\n")
-		}
+	}
+	
+	if !envLoaded {
+		fmt.Printf("Warning: No .env file found (this is optional)\n")
 	}
 
 	data, err := os.ReadFile(filename)

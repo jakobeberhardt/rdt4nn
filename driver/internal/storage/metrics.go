@@ -71,6 +71,7 @@ type ContainerMeta struct {
 	StopTime  int               `json:"stop_time"`
 	CorePin   int               `json:"core_pin"`
 	EnvVars   map[string]string `json:"env_vars,omitempty"`
+	Command   string            `json:"command,omitempty"`
 }
 
 // BenchmarkMetrics represents a comprehensive data point for a container at a specific time
@@ -219,7 +220,7 @@ func (b *BenchmarkMetrics) GetRelativeTime() int64 {
 func (sm *Manager) GetNextBenchmarkID(ctx context.Context) (int64, error) {
 	query := fmt.Sprintf(`
 		from(bucket: "%s")
-		|> range(start: -365d)  // Look back 1 year
+		|> range(start: -365d)
 		|> filter(fn: (r) => r._measurement == "benchmark_metrics")
 		|> filter(fn: (r) => r._field == "benchmark_id")
 		|> max()
@@ -300,6 +301,7 @@ func (sm *Manager) WriteBenchmarkMetrics(ctx context.Context, metrics *Benchmark
 	}
 
 	fields := map[string]interface{}{
+		"benchmark_id":        metrics.BenchmarkID,
 		"container_core":      metrics.ContainerCore,
 		"sampling_frequency":  metrics.SamplingFrequency,
 		"sampling_step":       metrics.SamplingStep,

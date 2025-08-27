@@ -329,6 +329,64 @@ func (m *Manager) IsContainerRunning(ctx context.Context, name string) (bool, er
 	return inspect.State.Running, nil
 }
 
+// ExecuteCommand executes a command in a running container
+func (m *Manager) ExecuteCommand(ctx context.Context, containerName, command string) error {
+	containerID, exists := m.containers[containerName]
+	if !exists {
+		return fmt.Errorf("container %s not found", containerName)
+	}
+
+	// Wait a moment for container to fully start and check if it's running
+	maxAttempts := 5
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		inspect, err := m.client.ContainerInspect(ctx, containerID)
+		if err != nil {
+			return fmt.Errorf("failed to inspect container %s: %w", containerName, err)
+		}
+
+		if inspect.State.Running {
+			break
+		}
+		
+		if attempt < maxAttempts-1 {
+			log.WithFields(log.Fields{
+				"container": containerName,
+				"attempt":   attempt + 1,
+			}).Debug("Container not running yet, waiting...")
+			time.Sleep(500 * time.Millisecond)
+		} else {
+			return fmt.Errorf("container %s is not running after %d attempts", containerName, maxAttempts)
+		}
+	}
+
+	// Create exec instance
+	execConfig := types.ExecConfig{
+		Cmd:          []string{"sh", "-c", command},
+		AttachStdout: true,
+		AttachStderr: true,
+		Detach:       true, // Run in background
+	}
+
+	exec, err := m.client.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create exec for container %s: %w", containerName, err)
+	}
+
+	// Start the exec
+	if err := m.client.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{Detach: true}); err != nil {
+		return fmt.Errorf("failed to start exec in container %s: %w", containerName, err)
+	}
+
+	log.WithFields(log.Fields{
+		"container_name": containerName,
+		"container_id":   containerID[:12],
+		"command":        command,
+		"exec_id":        exec.ID[:12],
+	}).Info("Command executed in container")
+
+	return nil
+}
+
 // Close closes the Docker client connection
 func (m *Manager) Close() error {
 	if m.client != nil {
