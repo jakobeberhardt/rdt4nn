@@ -144,21 +144,36 @@ func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]sto
 		}
 
 		// Run perf stat with cgroup filtering  
-		// Instead of using -I for intervals, get a single measurement over a short duration
-		cmd := exec.CommandContext(ctx, "sudo", "perf", "stat", 
+		// Create a timeout context specifically for perf to avoid cancellation issues
+		perfCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		
+		cmd := exec.CommandContext(perfCtx, "sudo", "perf", "stat", 
 			"-e", strings.Join(events, ","),
 			"-a", 
 			"--cgroup", cgroup,
 			"--", "sleep", "0.01") // 10ms measurement duration
+
+		log.WithFields(log.Fields{
+			"container": containerName,
+			"cgroup":    cgroup,
+			"events":    len(events),
+		}).Debug("Running perf stat command")
 
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			log.WithError(err).WithFields(log.Fields{
 				"container": containerName,
 				"cgroup":    cgroup,
+				"output":    string(output),
 			}).Debug("Failed to run perf stat, skipping perf collection for container")
 			continue
 		}
+
+		log.WithFields(log.Fields{
+			"container":   containerName,
+			"output_size": len(output),
+		}).Debug("Perf stat completed successfully")
 
 		// Parse the output and create measurements
 		containerMeasurements := p.parsePerfOutput(string(output), timestamp, containerName, containerID)
@@ -176,17 +191,30 @@ func (p *PerfCollector) parsePerfOutput(output string, timestamp time.Time, cont
 	lines := strings.Split(output, "\n")
 	perfData := make(map[string]uint64)
 	
+	sampleLines := lines
+	if len(lines) > 5 {
+		sampleLines = lines[:5]
+	}
+	log.WithFields(log.Fields{
+		"container":    containerName,
+		"total_lines":  len(lines),
+		"sample_lines": sampleLines,
+	}).Debug("Parsing perf output")
+	
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, " Performance counter stats") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, " Performance counter stats") ||
+		   strings.HasPrefix(line, "Performance counter stats") || strings.Contains(line, "seconds time elapsed") ||
+		   strings.Contains(line, "Some events weren't counted") || strings.Contains(line, "echo") ||
+		   strings.Contains(line, "perf stat") {
 			continue
 		}
 
 		// Parse standard perf stat output format
 		// Examples:
-		// 178,943,782      cycles:u                  #    2.60 GHz
-		// 350,295,496      instructions:u            #    1.96  insn per cycle
-		// <not supported>  cache-misses:u
+		// 62,314,106      cycles                    /system.slice/docker-...
+		// 122,567,399     instructions              /system.slice/docker-...
+		// <not supported> cache-misses:u
 		parts := strings.Fields(line)
 		if len(parts) < 2 {
 			continue
@@ -251,6 +279,12 @@ func (p *PerfCollector) parsePerfOutput(output string, timestamp time.Time, cont
 		}
 	}
 
+	log.WithFields(log.Fields{
+		"container":      containerName,
+		"metrics_parsed": len(perfData),
+		"metrics":        perfData,
+	}).Debug("Perf data parsed")
+
 	// Create measurements for each counter
 	for metricName, value := range perfData {
 		tags := map[string]string{
@@ -311,13 +345,10 @@ func (p *PerfCollector) parsePerfOutput(output string, timestamp time.Time, cont
 	return measurements
 }
 
-// Close closes the perf collector
 func (p *PerfCollector) Close() error {
-	// Nothing specific to close for perf
 	return nil
 }
 
-// Name returns the collector name
 func (p *PerfCollector) Name() string {
 	return "perf"
 }

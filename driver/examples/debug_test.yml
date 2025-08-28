@@ -1,13 +1,13 @@
 benchmark:
-  name: Test
-  description: A simple test benchmark which installs packages
-  max_t: 10
+  name: DebugTest
+  description: Debug test for perf collection
+  max_t: 5
   log_level: debug
   scheduler:
-    implementation: default  # Use default scheduler
-    rdt: false  # Disable RDT for simplicity
+    implementation: default
+    rdt: false
   data:
-    profilefrequency: 100  # Profile every 50ms
+    profilefrequency: 1000  # Profile every 1000ms to reduce frequency
     db:
       host: ${INFLUXDB_HOST}
       name: ${INFLUXDB_BUCKET}
@@ -20,12 +20,6 @@ benchmark:
 
 container0:
   index: 0
-  image: nginx:alpine
-  start: 0
-  core: 0
-  command: "while :; do dd if=/dev/zero of=/dev/null bs=1M count=100 2>/dev/null; done"
-container1:
-  index: 1
   image: nginx:alpine
   start: 0
   core: 0

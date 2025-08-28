@@ -103,10 +103,14 @@ func (pm *ComprehensiveManager) Initialize(ctx context.Context, containerIDs map
 
 func (pm *ComprehensiveManager) StartProfiling(ctx context.Context, containerIDs map[string]string) error {
 	log.WithField("frequency_ms", pm.config.ProfileFrequency).Info("Starting comprehensive profiling")
+	log.WithField("ticker_duration", time.Duration(pm.config.ProfileFrequency)*time.Millisecond).Debug("Setting up profiling ticker")
 
 	duration := time.Duration(pm.config.ProfileFrequency) * time.Millisecond
 	pm.ticker = time.NewTicker(duration)
 	defer pm.ticker.Stop()
+
+	log.Debug("Entering comprehensive profiling loop")
+	log.WithField("profile_frequency", pm.config.ProfileFrequency).Debug("Comprehensive profiler config check")
 
 	for {
 		select {
@@ -117,6 +121,7 @@ func (pm *ComprehensiveManager) StartProfiling(ctx context.Context, containerIDs
 			log.Info("Profiling stopped")
 			return nil
 		case timestamp := <-pm.ticker.C:
+			log.WithField("timestamp", timestamp).Debug("Ticker triggered - starting comprehensive metrics collection")
 			pm.wg.Add(1)
 			go pm.collectComprehensiveMetrics(ctx, timestamp, containerIDs)
 		}
@@ -125,6 +130,8 @@ func (pm *ComprehensiveManager) StartProfiling(ctx context.Context, containerIDs
 
 func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context, timestamp time.Time, containerIDs map[string]string) {
 	defer pm.wg.Done()
+
+	log.WithField("timestamp", timestamp).Debug("Starting comprehensive metrics collection")
 
 	pm.samplingStep++
 	step := pm.samplingStep
@@ -138,19 +145,28 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 	rdtData := make(map[string]*storage.RDTData)
 
 	for _, collector := range pm.collectors {
+		log.WithField("collector_name", collector.Name()).Debug("Collecting from collector")
 		measurements, err := collector.Collect(ctx, timestamp)
 		if err != nil {
 			log.WithError(err).WithField("collector", collector.Name()).Debug("Failed to collect metrics")
 			continue
 		}
 
+		log.WithFields(log.Fields{
+			"collector":         collector.Name(),
+			"measurement_count": len(measurements),
+		}).Debug("Collected measurements from collector")
+
 		switch collector.Name() {
 		case "docker_stats":
 			dockerData = pm.parseDockerMeasurements(measurements)
+			log.WithField("docker_containers", len(dockerData)).Debug("Parsed Docker measurements")
 		case "perf":
 			perfData = pm.parsePerfMeasurements(measurements)
+			log.WithField("perf_containers", len(perfData)).Debug("Parsed Perf measurements")
 		case "rdt":
 			rdtData = pm.parseRDTMeasurements(measurements)
+			log.WithField("rdt_containers", len(rdtData)).Debug("Parsed RDT measurements")
 		}
 	}
 
@@ -193,6 +209,13 @@ func (pm *ComprehensiveManager) collectComprehensiveMetrics(ctx context.Context,
 			PerfMetrics:   perfData[containerName], // Perf might use container name
 			RDTMetrics:    rdtData[containerName],  // RDT might use container name
 		}
+
+		log.WithFields(log.Fields{
+			"container":    containerName,
+			"perf_data":    perfData[containerName] != nil,
+			"docker_data":  dockerMetrics != nil,
+			"rdt_data":     rdtData[containerName] != nil,
+		}).Debug("Writing comprehensive metrics")
 
 		if err := pm.storage.WriteBenchmarkMetrics(ctx, metrics); err != nil {
 			log.WithError(err).WithField("container", containerName).Error("Failed to write comprehensive metrics")
@@ -313,35 +336,147 @@ func getKeys(m map[string]*storage.DockerData) []string {
 func (pm *ComprehensiveManager) parsePerfMeasurements(measurements []storage.Measurement) map[string]*storage.PerfData {
 	result := make(map[string]*storage.PerfData)
 	
+	log.WithFields(log.Fields{
+		"measurement_count": len(measurements),
+	}).Debug("Parsing perf measurements")
+	
 	for _, measurement := range measurements {
-		containerName := measurement.Tags["container_name"]
+		containerName := measurement.Tags["container"]
 		if containerName == "" {
 			continue
 		}
 
-		perfData := &storage.PerfData{}
-		
-		if val, ok := measurement.Fields["cpu_cycles"].(uint64); ok {
-			perfData.CPUCycles = val
+		// Initialize PerfData if not exists
+		if result[containerName] == nil {
+			result[containerName] = &storage.PerfData{}
 		}
-		if val, ok := measurement.Fields["instructions"].(uint64); ok {
-			perfData.Instructions = val
+		perfData := result[containerName]
+
+		// The perf collector creates measurements with "metric" tag and "value" field
+		metricName := measurement.Tags["metric"]
+		if metricName == "" {
+			continue
 		}
-		if val, ok := measurement.Fields["cache_references"].(uint64); ok {
-			perfData.CacheReferences = val
+
+		value := measurement.Fields["value"]
+		if value == nil {
+			continue
 		}
-		if val, ok := measurement.Fields["cache_misses"].(uint64); ok {
-			perfData.CacheMisses = val
+
+		// Set the appropriate field based on metric name
+		switch metricName {
+		case "cpu_cycles":
+			if val, ok := value.(uint64); ok {
+				perfData.CPUCycles = val
+			}
+		case "instructions":
+			if val, ok := value.(uint64); ok {
+				perfData.Instructions = val
+			}
+		case "cache_references":
+			if val, ok := value.(uint64); ok {
+				perfData.CacheReferences = val
+			}
+		case "cache_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.CacheMisses = val
+			}
+		case "branch_instructions":
+			if val, ok := value.(uint64); ok {
+				perfData.BranchInstructions = val
+			}
+		case "branch_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.BranchMisses = val
+			}
+		case "bus_cycles":
+			if val, ok := value.(uint64); ok {
+				perfData.BusCycles = val
+			}
+		case "ref_cycles":
+			if val, ok := value.(uint64); ok {
+				perfData.RefCycles = val
+			}
+		case "stalled_cycles_frontend":
+			if val, ok := value.(uint64); ok {
+				perfData.StalledCyclesFrontend = val
+			}
+		case "l1_dcache_loads":
+			if val, ok := value.(uint64); ok {
+				perfData.L1DCacheLoads = val
+			}
+		case "l1_dcache_load_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.L1DCacheLoadMisses = val
+			}
+		case "l1_dcache_stores":
+			if val, ok := value.(uint64); ok {
+				perfData.L1DCacheStores = val
+			}
+		case "l1_dcache_store_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.L1DCacheStoreMisses = val
+			}
+		case "l1_icache_load_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.L1ICacheLoadMisses = val
+			}
+		case "llc_loads":
+			if val, ok := value.(uint64); ok {
+				perfData.LLCLoads = val
+			}
+		case "llc_load_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.LLCLoadMisses = val
+			}
+		case "llc_stores":
+			if val, ok := value.(uint64); ok {
+				perfData.LLCStores = val
+			}
+		case "llc_store_misses":
+			if val, ok := value.(uint64); ok {
+				perfData.LLCStoreMisses = val
+			}
+		case "ipc":
+			if val, ok := value.(float64); ok {
+				perfData.IPC = val
+			}
+		case "cache_miss_rate":
+			if val, ok := value.(float64); ok {
+				perfData.CacheMissRate = val
+			}
+		case "page_faults":
+			if val, ok := value.(uint64); ok {
+				perfData.PageFaults = val
+			}
+		case "context_switches":
+			if val, ok := value.(uint64); ok {
+				perfData.ContextSwitches = val
+			}
+		case "cpu_migrations":
+			if val, ok := value.(uint64); ok {
+				perfData.CPUMigrations = val
+			}
 		}
-		// Calculate derived metrics
+	}
+	
+	// Calculate derived metrics for each container
+	for containerName, perfData := range result {
 		if perfData.Instructions > 0 && perfData.CPUCycles > 0 {
 			perfData.IPC = float64(perfData.Instructions) / float64(perfData.CPUCycles)
 		}
 		if perfData.CacheReferences > 0 && perfData.CacheMisses > 0 {
 			perfData.CacheMissRate = float64(perfData.CacheMisses) / float64(perfData.CacheReferences)
 		}
-
-		result[containerName] = perfData
+		
+		log.WithFields(log.Fields{
+			"container":        containerName,
+			"cpu_cycles":       perfData.CPUCycles,
+			"instructions":     perfData.Instructions,
+			"cache_references": perfData.CacheReferences,
+			"cache_misses":     perfData.CacheMisses,
+			"ipc":              perfData.IPC,
+		}).Debug("Final perf data for container")
 	}
 	
 	return result
