@@ -84,8 +84,15 @@ func (pm *ComprehensiveManager) Initialize(ctx context.Context, containerIDs map
 			return fmt.Errorf("failed to initialize collector %s: %w", collector.Name(), err)
 		}
 		
+		// Set container IDs for collectors that need them
 		if dockerCollector, ok := collector.(*DockerStatsCollector); ok {
 			dockerCollector.SetContainerIDs(containerIDs)
+		}
+		
+		// Set container IDs and sampling rate for perf collector
+		if perfCollector, ok := collector.(*PerfCollector); ok {
+			perfCollector.SetContainerIDs(containerIDs)
+			perfCollector.SetSamplingRate(pm.config.ProfileFrequency)
 		}
 		
 		log.WithField("collector", collector.Name()).Info("Collector initialized")
