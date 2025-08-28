@@ -101,6 +101,18 @@ func (pm *Manager) Initialize(ctx context.Context, containerIDs map[string]strin
 		if err := collector.Initialize(ctx); err != nil {
 			return fmt.Errorf("failed to initialize collector %s: %w", collector.Name(), err)
 		}
+
+		// Set container IDs for collectors that need them
+		if dockerCollector, ok := collector.(*DockerStatsCollector); ok {
+			dockerCollector.SetContainerIDs(containerIDs)
+		}
+		
+		// Set container IDs and sampling rate for perf collector
+		if perfCollector, ok := collector.(*PerfCollector); ok {
+			perfCollector.SetContainerIDs(containerIDs)
+			perfCollector.SetSamplingRate(pm.config.ProfileFrequency)
+		}
+
 		log.WithField("collector", collector.Name()).Info("Collector initialized")
 	}
 
@@ -303,7 +315,7 @@ func (dac *DataAggregatorCollector) aggregateDataByContainer(
 		containerData[containerName].DockerData = dockerData
 	}
 	
-	// Process Perf measurements
+	// Process Perf measurements - aggregate multiple metrics per container
 	for _, measurement := range perfMeasurements {
 		containerName := dac.extractContainerName(measurement)
 		if containerName == "" {
@@ -314,9 +326,16 @@ func (dac *DataAggregatorCollector) aggregateDataByContainer(
 			containerData[containerName] = &ContainerData{}
 		}
 		
-		// Convert measurement to PerfData
-		perfData := dac.convertToPerfData(measurement)
-		containerData[containerName].PerfData = perfData
+		if containerData[containerName].PerfData == nil {
+			containerData[containerName].PerfData = &storage.PerfData{}
+		}
+		
+		// Aggregate perf metrics by metric name from tags
+		if metricName, ok := measurement.Tags["metric"]; ok {
+			if value, ok := measurement.Fields["value"]; ok {
+				dac.setPerfMetric(containerData[containerName].PerfData, metricName, value)
+			}
+		}
 	}
 	
 	// Process RDT measurements
@@ -373,21 +392,108 @@ func (dac *DataAggregatorCollector) convertToDockerData(measurement storage.Meas
 func (dac *DataAggregatorCollector) convertToPerfData(measurement storage.Measurement) *storage.PerfData {
 	perfData := &storage.PerfData{}
 	
-	// Extract perf metrics
-	if val, ok := measurement.Fields["cpu_cycles"]; ok {
-		if u, ok := val.(uint64); ok {
+	// This function is now mostly unused since we aggregate metrics individually
+	// Keep it for backward compatibility
+	return perfData
+}
+
+// setPerfMetric sets a specific perf metric in PerfData based on metric name and value
+func (dac *DataAggregatorCollector) setPerfMetric(perfData *storage.PerfData, metricName string, value interface{}) {
+	switch metricName {
+	case "cpu_cycles":
+		if u, ok := value.(uint64); ok {
 			perfData.CPUCycles = u
 		}
-	}
-	
-	if val, ok := measurement.Fields["instructions"]; ok {
-		if u, ok := val.(uint64); ok {
+	case "instructions":
+		if u, ok := value.(uint64); ok {
 			perfData.Instructions = u
 		}
+	case "cache_references":
+		if u, ok := value.(uint64); ok {
+			perfData.CacheReferences = u
+		}
+	case "cache_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.CacheMisses = u
+		}
+	case "branch_instructions":
+		if u, ok := value.(uint64); ok {
+			perfData.BranchInstructions = u
+		}
+	case "branch_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.BranchMisses = u
+		}
+	case "bus_cycles":
+		if u, ok := value.(uint64); ok {
+			perfData.BusCycles = u
+		}
+	case "ref_cycles":
+		if u, ok := value.(uint64); ok {
+			perfData.RefCycles = u
+		}
+	case "stalled_cycles_frontend":
+		if u, ok := value.(uint64); ok {
+			perfData.StalledCyclesFrontend = u
+		}
+	case "l1_dcache_loads":
+		if u, ok := value.(uint64); ok {
+			perfData.L1DCacheLoads = u
+		}
+	case "l1_dcache_load_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.L1DCacheLoadMisses = u
+		}
+	case "l1_dcache_stores":
+		if u, ok := value.(uint64); ok {
+			perfData.L1DCacheStores = u
+		}
+	case "l1_dcache_store_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.L1DCacheStoreMisses = u
+		}
+	case "l1_icache_load_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.L1ICacheLoadMisses = u
+		}
+	case "llc_loads":
+		if u, ok := value.(uint64); ok {
+			perfData.LLCLoads = u
+		}
+	case "llc_load_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.LLCLoadMisses = u
+		}
+	case "llc_stores":
+		if u, ok := value.(uint64); ok {
+			perfData.LLCStores = u
+		}
+	case "llc_store_misses":
+		if u, ok := value.(uint64); ok {
+			perfData.LLCStoreMisses = u
+		}
+	case "ipc":
+		if f, ok := value.(float64); ok {
+			perfData.IPC = f
+		}
+	case "cache_miss_rate":
+		if f, ok := value.(float64); ok {
+			perfData.CacheMissRate = f
+		}
+	// Legacy metrics
+	case "page_faults":
+		if u, ok := value.(uint64); ok {
+			perfData.PageFaults = u
+		}
+	case "context_switches":
+		if u, ok := value.(uint64); ok {
+			perfData.ContextSwitches = u
+		}
+	case "cpu_migrations":
+		if u, ok := value.(uint64); ok {
+			perfData.CPUMigrations = u
+		}
 	}
-	
-	// Add more field extractions as needed
-	return perfData
 }
 
 func (dac *DataAggregatorCollector) convertToRDTData(measurement storage.Measurement) *storage.RDTData {

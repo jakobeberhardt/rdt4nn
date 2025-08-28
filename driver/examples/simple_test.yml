@@ -7,7 +7,7 @@ benchmark:
     implementation: default  # Use default scheduler
     rdt: false  # Disable RDT for simplicity
   data:
-    profilefrequency: 50  # Profile every 50ms
+    profilefrequency: 1000  # Profile every 50ms
     db:
       host: ${INFLUXDB_HOST}
       name: ${INFLUXDB_BUCKET}
@@ -23,34 +23,10 @@ container0:
   image: nginx:alpine
   start: 0
   core: 0
-  command: "sleep 5 && apk add firefox"
+  command: "apk add firefox"
 container1:
   index: 1
   image: nginx:alpine
   start: 0
   core: 0
-  command: "sleep 15 && apk add firefox"
-container2:
-  index: 2
-  image: nginx:alpine
-  start: 0
-  core: 0
-  command: "sleep 30 && apk add firefox"
-container3:
-  index: 3
-  image: nginx:alpine
-  start: 0
-  core: 0
-  command: "sleep 45 && apk add firefox"
-container4:
-  index: 4
-  image: nginx:alpine
-  start: 0
-  core: 0
-  command: "sleep 60 && apk add firefox"
-container5:
-  index: 5
-  image: nginx:alpine
-  start: 0
-  core: 0
-  command: "sleep 75 && apk add firefox"
+  command: "apk add firefox"

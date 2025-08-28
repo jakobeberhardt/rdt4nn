@@ -103,16 +103,36 @@ type BenchmarkMetrics struct {
 
 // PerfData represents performance counter data
 type PerfData struct {
-	CPUCycles        uint64  `json:"cpu_cycles,omitempty"`
-	Instructions     uint64  `json:"instructions,omitempty"`
-	CacheReferences  uint64  `json:"cache_references,omitempty"`
-	CacheMisses      uint64  `json:"cache_misses,omitempty"`
-	BranchMisses     uint64  `json:"branch_misses,omitempty"`
-	PageFaults       uint64  `json:"page_faults,omitempty"`
-	ContextSwitches  uint64  `json:"context_switches,omitempty"`
-	CPUMigrations    uint64  `json:"cpu_migrations,omitempty"`
-	IPC              float64 `json:"ipc,omitempty"` // Instructions per cycle
-	CacheMissRate    float64 `json:"cache_miss_rate,omitempty"`
+	// Basic hardware counters
+	CPUCycles               uint64  `json:"cpu_cycles,omitempty"`
+	Instructions            uint64  `json:"instructions,omitempty"`
+	CacheReferences         uint64  `json:"cache_references,omitempty"`
+	CacheMisses             uint64  `json:"cache_misses,omitempty"`
+	BranchInstructions      uint64  `json:"branch_instructions,omitempty"`
+	BranchMisses            uint64  `json:"branch_misses,omitempty"`
+	BusCycles               uint64  `json:"bus_cycles,omitempty"`
+	RefCycles               uint64  `json:"ref_cycles,omitempty"`
+	StalledCyclesFrontend   uint64  `json:"stalled_cycles_frontend,omitempty"`
+	
+	// Cache events
+	L1DCacheLoads           uint64  `json:"l1_dcache_loads,omitempty"`
+	L1DCacheLoadMisses      uint64  `json:"l1_dcache_load_misses,omitempty"`
+	L1DCacheStores          uint64  `json:"l1_dcache_stores,omitempty"`
+	L1DCacheStoreMisses     uint64  `json:"l1_dcache_store_misses,omitempty"`
+	L1ICacheLoadMisses      uint64  `json:"l1_icache_load_misses,omitempty"`
+	LLCLoads                uint64  `json:"llc_loads,omitempty"`
+	LLCLoadMisses           uint64  `json:"llc_load_misses,omitempty"`
+	LLCStores               uint64  `json:"llc_stores,omitempty"`
+	LLCStoreMisses          uint64  `json:"llc_store_misses,omitempty"`
+	
+	// Calculated metrics
+	IPC                     float64 `json:"ipc,omitempty"`           // Instructions per cycle
+	CacheMissRate           float64 `json:"cache_miss_rate,omitempty"`
+	
+	// Legacy fields (for backward compatibility)
+	PageFaults              uint64  `json:"page_faults,omitempty"`
+	ContextSwitches         uint64  `json:"context_switches,omitempty"`
+	CPUMigrations           uint64  `json:"cpu_migrations,omitempty"`
 }
 
 // DockerData represents Docker container statistics
@@ -366,16 +386,36 @@ func addDockerFields(fields map[string]interface{}, docker *DockerData) {
 }
 
 func addPerfFields(fields map[string]interface{}, perf *PerfData) {
+	// Basic hardware counters
 	fields["perf_cpu_cycles"] = perf.CPUCycles
 	fields["perf_instructions"] = perf.Instructions
 	fields["perf_cache_references"] = perf.CacheReferences
 	fields["perf_cache_misses"] = perf.CacheMisses
+	fields["perf_branch_instructions"] = perf.BranchInstructions
 	fields["perf_branch_misses"] = perf.BranchMisses
+	fields["perf_bus_cycles"] = perf.BusCycles
+	fields["perf_ref_cycles"] = perf.RefCycles
+	fields["perf_stalled_cycles_frontend"] = perf.StalledCyclesFrontend
+	
+	// Cache events
+	fields["perf_l1_dcache_loads"] = perf.L1DCacheLoads
+	fields["perf_l1_dcache_load_misses"] = perf.L1DCacheLoadMisses
+	fields["perf_l1_dcache_stores"] = perf.L1DCacheStores
+	fields["perf_l1_dcache_store_misses"] = perf.L1DCacheStoreMisses
+	fields["perf_l1_icache_load_misses"] = perf.L1ICacheLoadMisses
+	fields["perf_llc_loads"] = perf.LLCLoads
+	fields["perf_llc_load_misses"] = perf.LLCLoadMisses
+	fields["perf_llc_stores"] = perf.LLCStores
+	fields["perf_llc_store_misses"] = perf.LLCStoreMisses
+	
+	// Calculated metrics
+	fields["perf_ipc"] = perf.IPC
+	fields["perf_cache_miss_rate"] = perf.CacheMissRate
+	
+	// Legacy fields
 	fields["perf_page_faults"] = perf.PageFaults
 	fields["perf_context_switches"] = perf.ContextSwitches
 	fields["perf_cpu_migrations"] = perf.CPUMigrations
-	fields["perf_ipc"] = perf.IPC
-	fields["perf_cache_miss_rate"] = perf.CacheMissRate
 }
 
 func addRDTFields(fields map[string]interface{}, rdt *RDTData) {
