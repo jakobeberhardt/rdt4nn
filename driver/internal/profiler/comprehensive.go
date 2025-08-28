@@ -60,6 +60,8 @@ func NewComprehensiveManager(
 
 	if config.Perf {
 		perfCollector := NewPerfCollector(benchmarkID)
+		// Set high-frequency sampling for perf (every 200ms for resilient collection)
+		perfCollector.SetSamplingRate(200)
 		pm.collectors = append(pm.collectors, perfCollector)
 	}
 
@@ -89,10 +91,10 @@ func (pm *ComprehensiveManager) Initialize(ctx context.Context, containerIDs map
 			dockerCollector.SetContainerIDs(containerIDs)
 		}
 		
-		// Set container IDs and sampling rate for perf collector
+		// Set container IDs and keep high-frequency sampling for perf collector
 		if perfCollector, ok := collector.(*PerfCollector); ok {
 			perfCollector.SetContainerIDs(containerIDs)
-			perfCollector.SetSamplingRate(pm.config.ProfileFrequency)
+			// Keep the 200ms sampling rate set during creation, don't override with slower comprehensive frequency
 		}
 		
 		log.WithField("collector", collector.Name()).Info("Collector initialized")
