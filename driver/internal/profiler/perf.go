@@ -25,9 +25,7 @@ type PerfBuffer struct {
 
 // PerfCollector collects hardware performance counters using perf with cgroup filtering
 type PerfCollector struct {
-	benchmarkID  string
-	containerIDs map[string]string // container name -> container ID mapping
-	samplingRate int               // sampling rate in milliseconds
+	metadataProvider *MetadataProvider
 	
 	// Buffering system
 	buffers     map[string]*PerfBuffer // container name -> latest perf data
@@ -38,20 +36,16 @@ type PerfCollector struct {
 }
 
 // NewPerfCollector creates a new perf collector
-func NewPerfCollector(benchmarkID string) *PerfCollector {
+func NewPerfCollector(metadataProvider *MetadataProvider) *PerfCollector {
 	return &PerfCollector{
-		benchmarkID:  benchmarkID,
-		containerIDs: make(map[string]string),
-		buffers:      make(map[string]*PerfBuffer),
-		samplingRate: 100, // default 100ms, will be updated from config
-		stopChan:     make(chan struct{}),
+		metadataProvider: metadataProvider,
+		buffers:          make(map[string]*PerfBuffer),
+		stopChan:         make(chan struct{}),
 	}
 }
 
 // SetContainerIDs sets the container IDs for monitoring
 func (p *PerfCollector) SetContainerIDs(containerIDs map[string]string) {
-	p.containerIDs = containerIDs
-	
 	// Initialize buffers for each container
 	p.bufferMutex.Lock()
 	defer p.bufferMutex.Unlock()
@@ -64,11 +58,10 @@ func (p *PerfCollector) SetContainerIDs(containerIDs map[string]string) {
 	}
 }
 
-// SetSamplingRate sets the sampling rate from configuration
+// SetSamplingRate sets the sampling rate from configuration (deprecated - now handled by metadata provider)
 func (p *PerfCollector) SetSamplingRate(rateMs int) {
-	if rateMs > 0 {
-		p.samplingRate = rateMs
-	}
+	// This method is kept for backward compatibility but no longer used
+	// The sampling rate is now managed by the metadata provider
 }
 
 // Initialize initializes the perf collector and starts the background collection
@@ -78,12 +71,25 @@ func (p *PerfCollector) Initialize(ctx context.Context) error {
 		return fmt.Errorf("perf command not found: %w", err)
 	}
 
+	// Get configuration from metadata provider
+	config := p.metadataProvider.GetConfig()
+	
+	// Initialize buffers for each container
+	p.bufferMutex.Lock()
+	for containerName := range config.ContainerMetadata {
+		p.buffers[containerName] = &PerfBuffer{
+			containerName: containerName,
+			data:         make(map[string]uint64),
+		}
+	}
+	p.bufferMutex.Unlock()
+
 	// Start background collection goroutine
 	p.running = true
 	p.wg.Add(1)
 	go p.backgroundCollection(ctx)
 
-	log.WithField("sampling_rate_ms", p.samplingRate).Info("Perf collector initialized with background collection")
+	log.WithField("sampling_rate_ms", config.SamplingRate).Info("Perf collector initialized with background collection")
 	return nil
 }
 
@@ -91,10 +97,14 @@ func (p *PerfCollector) Initialize(ctx context.Context) error {
 func (p *PerfCollector) backgroundCollection(ctx context.Context) {
 	defer p.wg.Done()
 	
-	ticker := time.NewTicker(time.Duration(p.samplingRate) * time.Millisecond)
+	// Get sampling rate from metadata provider
+	config := p.metadataProvider.GetConfig()
+	samplingRate := config.SamplingRate
+	
+	ticker := time.NewTicker(time.Duration(samplingRate) * time.Millisecond)
 	defer ticker.Stop()
 	
-	log.WithField("interval_ms", p.samplingRate).Debug("Starting background perf collection")
+	log.WithField("interval_ms", samplingRate).Debug("Starting background perf collection")
 	
 	for {
 		select {
@@ -135,21 +145,12 @@ func (p *PerfCollector) collectAndBuffer(timestamp time.Time) {
 		"LLC-store-misses",
 	}
 
+	// Get container names from metadata provider
+	containerNames := p.metadataProvider.GetAllContainerNames()
+
 	// Collect metrics for each container
-	for containerName, containerID := range p.containerIDs {
-		if containerID == "" {
-			continue
-		}
-
-		// Get container PID
-		pid, err := p.getContainerPID(containerID)
-		if err != nil {
-			// Don't log every failure to reduce noise
-			continue
-		}
-
-		// Get container cgroup
-		cgroup, err := p.getContainerCgroup(pid)
+	for _, containerName := range containerNames {
+		metadata, err := p.metadataProvider.GetContainerMetadata(containerName)
 		if err != nil {
 			continue
 		}
@@ -161,7 +162,7 @@ func (p *PerfCollector) collectAndBuffer(timestamp time.Time) {
 		cmd := exec.CommandContext(perfCtx, "sudo", "perf", "stat", 
 			"-e", strings.Join(events, ","),
 			"-a", 
-			"--cgroup", cgroup,
+			"--cgroup", metadata.Cgroup,
 			"--", "sleep", "0.01") // 10ms measurement duration
 
 		output, err := cmd.CombinedOutput()
@@ -192,22 +193,7 @@ func (p *PerfCollector) collectAndBuffer(timestamp time.Time) {
 	}
 }
 
-// getContainerPID gets the PID of a container
-func (p *PerfCollector) getContainerPID(containerID string) (int, error) {
-	cmd := exec.Command("docker", "inspect", "-f", "{{.State.Pid}}", containerID)
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get container PID: %w", err)
-	}
-
-	pidStr := strings.TrimSpace(string(output))
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid PID: %w", err)
-	}
-
-	return pid, nil
-}
+// Collect returns buffered perf measurements for all containers
 
 // getContainerCgroup gets the cgroup path for a container
 func (p *PerfCollector) getContainerCgroup(pid int) (string, error) {
@@ -244,9 +230,13 @@ func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]sto
 	p.bufferMutex.RLock()
 	defer p.bufferMutex.RUnlock()
 
+	// Get container names from metadata provider
+	containerNames := p.metadataProvider.GetAllContainerNames()
+
 	// Get latest buffered data for each container
-	for containerName, containerID := range p.containerIDs {
-		if containerID == "" {
+	for _, containerName := range containerNames {
+		metadata, err := p.metadataProvider.GetContainerMetadata(containerName)
+		if err != nil {
 			continue
 		}
 
@@ -275,7 +265,7 @@ func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]sto
 		}
 
 		// Convert buffered data to measurements
-		containerMeasurements := p.convertToMeasurements(perfData, timestamp, containerName, containerID)
+		containerMeasurements := p.convertToMeasurements(perfData, timestamp, metadata)
 		measurements = append(measurements, containerMeasurements...)
 
 		log.WithFields(log.Fields{
@@ -289,16 +279,19 @@ func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]sto
 }
 
 // convertToMeasurements converts perf data map to measurement format
-func (p *PerfCollector) convertToMeasurements(perfData map[string]uint64, timestamp time.Time, containerName, containerID string) []storage.Measurement {
+func (p *PerfCollector) convertToMeasurements(perfData map[string]uint64, timestamp time.Time, metadata *ContainerMetadata) []storage.Measurement {
 	var measurements []storage.Measurement
+
+	// Get configuration for benchmark ID
+	config := p.metadataProvider.GetConfig()
 
 	// Create measurements for each counter
 	for metricName, value := range perfData {
 		tags := map[string]string{
-			"benchmark_id":  p.benchmarkID,
+			"benchmark_id":  config.BenchmarkID,
 			"collector":     "perf",
-			"container":     containerName,
-			"container_id":  containerID,
+			"container":     metadata.Name,
+			"container_id":  metadata.ShortID,
 			"metric":        metricName,
 		}
 
@@ -315,10 +308,10 @@ func (p *PerfCollector) convertToMeasurements(perfData map[string]uint64, timest
 		if instructions, hasInstr := perfData["instructions"]; hasInstr && cycles > 0 {
 			ipc := float64(instructions) / float64(cycles)
 			tags := map[string]string{
-				"benchmark_id":  p.benchmarkID,
+				"benchmark_id":  config.BenchmarkID,
 				"collector":     "perf",
-				"container":     containerName,
-				"container_id":  containerID,
+				"container":     metadata.Name,
+				"container_id":  metadata.ShortID,
 				"metric":        "ipc",
 			}
 			measurements = append(measurements, storage.Measurement{
@@ -334,10 +327,10 @@ func (p *PerfCollector) convertToMeasurements(perfData map[string]uint64, timest
 		if cacheMisses, hasMisses := perfData["cache_misses"]; hasMisses && cacheRefs > 0 {
 			missRate := float64(cacheMisses) / float64(cacheRefs)
 			tags := map[string]string{
-				"benchmark_id":  p.benchmarkID,
+				"benchmark_id":  config.BenchmarkID,
 				"collector":     "perf",
-				"container":     containerName,
-				"container_id":  containerID,
+				"container":     metadata.Name,
+				"container_id":  metadata.ShortID,
 				"metric":        "cache_miss_rate",
 			}
 			measurements = append(measurements, storage.Measurement{

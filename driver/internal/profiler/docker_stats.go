@@ -13,23 +13,19 @@ import (
 )
 
 type DockerStatsCollector struct {
-	benchmarkID  string
-	client       *client.Client
-	containerIDs map[string]string
+	metadataProvider *MetadataProvider
+	client           *client.Client
 }
 
-func NewDockerStatsCollector(benchmarkID string) *DockerStatsCollector {
+func NewDockerStatsCollector(metadataProvider *MetadataProvider) *DockerStatsCollector {
 	return &DockerStatsCollector{
-		benchmarkID:  benchmarkID,
-		containerIDs: make(map[string]string),
+		metadataProvider: metadataProvider,
 	}
 }
 
 func (d *DockerStatsCollector) SetContainerIDs(containerIDs map[string]string) {
-	d.containerIDs = make(map[string]string)
-	for name, id := range containerIDs {
-		d.containerIDs[name] = id
-	}
+	// This method is kept for backward compatibility but is no longer needed
+	// Container IDs are now managed by the metadata provider
 }
 
 func (d *DockerStatsCollector) Initialize(ctx context.Context) error {
@@ -44,11 +40,20 @@ func (d *DockerStatsCollector) Initialize(ctx context.Context) error {
 func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time) ([]storage.Measurement, error) {
 	var measurements []storage.Measurement
 
-	// Use the container IDs that were provided to us instead of filtering
-	for containerName, containerID := range d.containerIDs {
+	// Get container names from metadata provider
+	containerNames := d.metadataProvider.GetAllContainerNames()
+
+	// Use the container metadata that was provided to us
+	for _, containerName := range containerNames {
+		metadata, err := d.metadataProvider.GetContainerMetadata(containerName)
+		if err != nil {
+			log.WithError(err).WithField("container", containerName).Warn("Failed to get container metadata")
+			continue
+		}
+
 		log.WithFields(log.Fields{
 			"container_name": containerName,
-			"container_id":   containerID[:12],
+			"container_id":   metadata.ShortID,
 		}).Debug("Collecting stats for container")
 
 		// Create a separate context with timeout for each container stats request
@@ -56,49 +61,45 @@ func (d *DockerStatsCollector) Collect(ctx context.Context, timestamp time.Time)
 		statsCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 		// Get container stats directly by ID
-		stats, err := d.client.ContainerStats(statsCtx, containerID, false)
+		stats, err := d.client.ContainerStats(statsCtx, metadata.ID, false)
 		cancel() // Cancel immediately after the request
 		
 		if err != nil {
-			log.WithError(err).WithField("container", containerID[:12]).Warn("Failed to get container stats")
+			log.WithError(err).WithField("container", metadata.ShortID).Warn("Failed to get container stats")
 			continue
 		}
 
 		var statsJSON types.StatsJSON
 		if err := json.NewDecoder(stats.Body).Decode(&statsJSON); err != nil {
 			stats.Body.Close()
-			log.WithError(err).WithField("container", containerID[:12]).Warn("Failed to decode container stats")
+			log.WithError(err).WithField("container", metadata.ShortID).Warn("Failed to decode container stats")
 			continue
 		}
 		stats.Body.Close()
 
 		log.WithFields(log.Fields{
-			"container":    containerID[:12],
+			"container":    metadata.ShortID,
 			"cpu_usage":    statsJSON.CPUStats.CPUUsage.TotalUsage,
 			"memory_usage": statsJSON.MemoryStats.Usage,
 		}).Debug("Successfully collected container stats")
 
-		// We don't need to inspect the container since we already have the name
-		// Just use the container name and derive index from it
-		containerMeasurements := d.convertStatsToMeasurements(containerName, containerID, statsJSON, timestamp)
+		// Convert to measurements using metadata
+		containerMeasurements := d.convertStatsToMeasurements(metadata, statsJSON, timestamp)
 		measurements = append(measurements, containerMeasurements...)
 	}
 
 	return measurements, nil
 }
 
-func (d *DockerStatsCollector) convertStatsToMeasurements(containerName, containerID string, stats types.StatsJSON, timestamp time.Time) []storage.Measurement {
-	// Extract container index from name (e.g., "container0" -> "0")
-	containerIndex := ""
-	if len(containerName) > 9 && containerName[:9] == "container" {
-		containerIndex = containerName[9:]
-	}
+func (d *DockerStatsCollector) convertStatsToMeasurements(metadata *ContainerMetadata, stats types.StatsJSON, timestamp time.Time) []storage.Measurement {
+	// Get configuration for benchmark ID
+	config := d.metadataProvider.GetConfig()
 
 	tags := map[string]string{
-		"benchmark_id":     d.benchmarkID,
-		"container_id":     containerID[:12], // Use short container ID
-		"container_name":   containerName,
-		"container_index":  containerIndex,
+		"benchmark_id":     config.BenchmarkID,
+		"container_id":     metadata.ShortID,
+		"container_name":   metadata.Name,
+		"container_index":  metadata.Index,
 		"collector":        "docker_stats",
 	}
 
