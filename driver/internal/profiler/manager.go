@@ -23,6 +23,7 @@ type Manager struct {
 	wg               sync.WaitGroup
 	containerConfigs map[string]*config.ContainerConfig // Add container configs
 	schedulerType    string                              // Add scheduler type
+	metadataProvider *MetadataProvider                   // Centralized metadata provider
 }
 
 // ProfilerManager defines the interface that all profiler managers must implement
@@ -42,13 +43,25 @@ type Collector interface {
 
 // NewManager creates a new profiler manager
 func NewManager(config *config.DataConfig, benchmarkID string, benchmarkIDNum int64, storage *storage.Manager) (*Manager, error) {
+	// Create metadata provider
+	metadataProvider := NewMetadataProvider(benchmarkID, config.ProfileFrequency)
+	
+	// Set enabled profilers
+	enabledProfilers := map[string]bool{
+		"docker_stats": config.DockerStats,
+		"perf":         config.Perf,
+		"rdt":          config.RDT,
+	}
+	metadataProvider.SetEnabledProfilers(enabledProfilers)
+
 	pm := &Manager{
-		config:         config,
-		benchmarkID:    benchmarkID,
-		benchmarkIDNum: benchmarkIDNum,
-		storage:        storage,
-		collectors:     make([]Collector, 0),
-		stopChan:       make(chan struct{}),
+		config:           config,
+		benchmarkID:      benchmarkID,
+		benchmarkIDNum:   benchmarkIDNum,
+		storage:          storage,
+		collectors:       make([]Collector, 0),
+		stopChan:         make(chan struct{}),
+		metadataProvider: metadataProvider,
 	}
 
 	// Initialize collectors based on configuration
@@ -57,17 +70,17 @@ func NewManager(config *config.DataConfig, benchmarkID string, benchmarkIDNum in
 	var rdtCollector *RDTCollector
 	
 	if config.DockerStats {
-		dockerCollector = NewDockerStatsCollector(benchmarkID)
+		dockerCollector = NewDockerStatsCollector(metadataProvider)
 		pm.collectors = append(pm.collectors, dockerCollector)
 	}
 
 	if config.Perf {
-		perfCollector = NewPerfCollector(benchmarkID)
+		perfCollector = NewPerfCollector(metadataProvider)
 		pm.collectors = append(pm.collectors, perfCollector)
 	}
 
 	if config.RDT {
-		rdtCollector = NewRDTCollector(benchmarkID)
+		rdtCollector = NewRDTCollector(benchmarkID) // RDT collector not yet refactored
 		pm.collectors = append(pm.collectors, rdtCollector)
 	}
 
@@ -97,12 +110,21 @@ func NewManager(config *config.DataConfig, benchmarkID string, benchmarkIDNum in
 func (pm *Manager) Initialize(ctx context.Context, containerIDs map[string]string) error {
 	log.Info("Initializing profiler collectors")
 
+	// Set container IDs in metadata provider and initialize
+	if err := pm.metadataProvider.SetContainerIDs(containerIDs); err != nil {
+		return fmt.Errorf("failed to initialize container metadata: %w", err)
+	}
+	
+	if err := pm.metadataProvider.Initialize(ctx); err != nil {
+		return fmt.Errorf("failed to initialize metadata provider: %w", err)
+	}
+
 	for _, collector := range pm.collectors {
 		if err := collector.Initialize(ctx); err != nil {
 			return fmt.Errorf("failed to initialize collector %s: %w", collector.Name(), err)
 		}
 
-		// Set container IDs for collectors that need them
+		// Set container IDs for collectors that still need backward compatibility
 		if dockerCollector, ok := collector.(*DockerStatsCollector); ok {
 			dockerCollector.SetContainerIDs(containerIDs)
 		}
@@ -170,6 +192,11 @@ func (pm *Manager) Stop() error {
 
 	close(pm.stopChan)
 	pm.wg.Wait()
+
+	// Stop metadata provider
+	if err := pm.metadataProvider.Stop(); err != nil {
+		log.WithError(err).Warn("Failed to stop metadata provider")
+	}
 
 	var errors []error
 	for _, collector := range pm.collectors {

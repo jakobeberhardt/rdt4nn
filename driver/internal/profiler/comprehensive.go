@@ -14,17 +14,18 @@ import (
 
 // ComprehensiveManager coordinates all profiling and creates comprehensive metrics
 type ComprehensiveManager struct {
-	config         *config.DataConfig
-	benchmarkID    string
-	benchmarkIDNum int64
-	startTime      time.Time
-	endTime        time.Time
-	storage        *storage.Manager
-	collectors     []Collector
-	ticker         *time.Ticker
-	stopChan       chan struct{}
-	wg             sync.WaitGroup
-	samplingStep   int64 
+	config           *config.DataConfig
+	benchmarkID      string
+	benchmarkIDNum   int64
+	startTime        time.Time
+	endTime          time.Time
+	storage          *storage.Manager
+	collectors       []Collector
+	ticker           *time.Ticker
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	samplingStep     int64 
+	metadataProvider *MetadataProvider // Add metadata provider
 	
 	containerConfigs map[string]*config.ContainerConfig
 	schedulerType    string
@@ -39,6 +40,17 @@ func NewComprehensiveManager(
 	containerConfigs map[string]*config.ContainerConfig,
 	schedulerType string,
 ) (*ComprehensiveManager, error) {
+	// Create metadata provider
+	metadataProvider := NewMetadataProvider(benchmarkID, config.ProfileFrequency)
+	
+	// Set enabled profilers
+	enabledProfilers := map[string]bool{
+		"docker_stats": config.DockerStats,
+		"perf":         config.Perf,
+		"rdt":          config.RDT,
+	}
+	metadataProvider.SetEnabledProfilers(enabledProfilers)
+
 	pm := &ComprehensiveManager{
 		config:           config,
 		benchmarkID:      benchmarkID,
@@ -48,20 +60,19 @@ func NewComprehensiveManager(
 		collectors:       make([]Collector, 0),
 		stopChan:         make(chan struct{}),
 		samplingStep:     0,
+		metadataProvider: metadataProvider,
 		containerConfigs: containerConfigs,
 		schedulerType:    schedulerType,
 	}
 
 	// Initialize collectors based on configuration
 	if config.DockerStats {
-		dockerCollector := NewDockerStatsCollector(benchmarkID)
+		dockerCollector := NewDockerStatsCollector(metadataProvider)
 		pm.collectors = append(pm.collectors, dockerCollector)
 	}
 
 	if config.Perf {
-		perfCollector := NewPerfCollector(benchmarkID)
-		// Set high-frequency sampling for perf (every 200ms for resilient collection)
-		perfCollector.SetSamplingRate(200)
+		perfCollector := NewPerfCollector(metadataProvider)
 		pm.collectors = append(pm.collectors, perfCollector)
 	}
 
@@ -79,22 +90,31 @@ func NewComprehensiveManager(
 }
 
 func (pm *ComprehensiveManager) Initialize(ctx context.Context, containerIDs map[string]string) error {
-	log.Info("Initializing profiler collectors")
+	log.Info("Initializing comprehensive profiler collectors")
+
+	// Set container IDs in metadata provider and initialize
+	if err := pm.metadataProvider.SetContainerIDs(containerIDs); err != nil {
+		return fmt.Errorf("failed to initialize container metadata: %w", err)
+	}
+	
+	if err := pm.metadataProvider.Initialize(ctx); err != nil {
+		return fmt.Errorf("failed to initialize metadata provider: %w", err)
+	}
 
 	for _, collector := range pm.collectors {
 		if err := collector.Initialize(ctx); err != nil {
 			return fmt.Errorf("failed to initialize collector %s: %w", collector.Name(), err)
 		}
 		
-		// Set container IDs for collectors that need them
+		// Set container IDs for collectors that still need backward compatibility
 		if dockerCollector, ok := collector.(*DockerStatsCollector); ok {
 			dockerCollector.SetContainerIDs(containerIDs)
 		}
 		
-		// Set container IDs and keep high-frequency sampling for perf collector
+		// Set container IDs for perf collector
 		if perfCollector, ok := collector.(*PerfCollector); ok {
 			perfCollector.SetContainerIDs(containerIDs)
-			// Keep the 200ms sampling rate set during creation, don't override with slower comprehensive frequency
+			perfCollector.SetSamplingRate(pm.config.ProfileFrequency)
 		}
 		
 		log.WithField("collector", collector.Name()).Info("Collector initialized")
@@ -524,6 +544,11 @@ func (pm *ComprehensiveManager) Stop() error {
 	log.Info("Stopping profiler")
 	close(pm.stopChan)
 	pm.wg.Wait()
+
+	// Stop metadata provider
+	if err := pm.metadataProvider.Stop(); err != nil {
+		log.WithError(err).Warn("Failed to stop metadata provider")
+	}
 
 	var errors []error
 	for _, collector := range pm.collectors {
