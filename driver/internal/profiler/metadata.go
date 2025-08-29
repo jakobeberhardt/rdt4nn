@@ -52,7 +52,7 @@ func NewMetadataProvider(benchmarkID string, samplingRate int) *MetadataProvider
 			EnabledProfilers:  make(map[string]bool),
 		},
 		containerIDs:    make(map[string]string),
-		refreshInterval: 30 * time.Second, // Refresh every 30s as a safety check
+		refreshInterval: 2 * time.Second, // Refresh every 2s to catch containers starting quickly
 		stopChan:        make(chan struct{}),
 	}
 }

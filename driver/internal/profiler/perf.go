@@ -23,24 +23,28 @@ type PerfBuffer struct {
 	mutex        sync.RWMutex
 }
 
-// PerfCollector collects hardware performance counters using perf with cgroup filtering
+// PerfCollector collects hardware performance counters using perf with cgroup filtering and interval approach
 type PerfCollector struct {
 	metadataProvider *MetadataProvider
 	
-	// Buffering system
-	buffers     map[string]*PerfBuffer // container name -> latest perf data
-	bufferMutex sync.RWMutex
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
-	running     bool
+	// Interval-based collection per container
+	containerCommands map[string]*exec.Cmd    // container name -> perf command
+	containerReaders  map[string]*bufio.Scanner // container name -> output scanner
+	buffers           map[string]*PerfBuffer  // container name -> latest perf data
+	bufferMutex       sync.RWMutex
+	stopChan          chan struct{}
+	wg                sync.WaitGroup
+	running           bool
 }
 
 // NewPerfCollector creates a new perf collector
 func NewPerfCollector(metadataProvider *MetadataProvider) *PerfCollector {
 	return &PerfCollector{
-		metadataProvider: metadataProvider,
-		buffers:          make(map[string]*PerfBuffer),
-		stopChan:         make(chan struct{}),
+		metadataProvider:  metadataProvider,
+		containerCommands: make(map[string]*exec.Cmd),
+		containerReaders:  make(map[string]*bufio.Scanner),
+		buffers:           make(map[string]*PerfBuffer),
+		stopChan:          make(chan struct{}),
 	}
 }
 
@@ -64,7 +68,7 @@ func (p *PerfCollector) SetSamplingRate(rateMs int) {
 	// The sampling rate is now managed by the metadata provider
 }
 
-// Initialize initializes the perf collector and starts the background collection
+// Initialize initializes the perf collector and starts interval-based collection per container
 func (p *PerfCollector) Initialize(ctx context.Context) error {
 	// Check if perf is available
 	if _, err := exec.LookPath("perf"); err != nil {
@@ -74,6 +78,17 @@ func (p *PerfCollector) Initialize(ctx context.Context) error {
 	// Get configuration from metadata provider
 	config := p.metadataProvider.GetConfig()
 	
+	log.WithFields(log.Fields{
+		"config_containers": len(config.ContainerMetadata),
+		"config_keys": func() []string {
+			keys := make([]string, 0, len(config.ContainerMetadata))
+			for k := range config.ContainerMetadata {
+				keys = append(keys, k)
+			}
+			return keys
+		}(),
+	}).Debug("Perf collector initializing with container metadata")
+	
 	// Initialize buffers for each container
 	p.bufferMutex.Lock()
 	for containerName := range config.ContainerMetadata {
@@ -81,116 +96,308 @@ func (p *PerfCollector) Initialize(ctx context.Context) error {
 			containerName: containerName,
 			data:         make(map[string]uint64),
 		}
+		log.WithField("container", containerName).Debug("Initialized perf buffer for container")
 	}
 	p.bufferMutex.Unlock()
 
-	// Start background collection goroutine
+	// Start interval-based collection for each container
 	p.running = true
-	p.wg.Add(1)
-	go p.backgroundCollection(ctx)
+	for containerName := range config.ContainerMetadata {
+		log.WithField("container", containerName).Debug("Starting perf collection goroutine for container")
+		p.wg.Add(1)
+		go p.startContainerCollection(ctx, containerName)
+	}
 
-	log.WithField("sampling_rate_ms", config.SamplingRate).Info("Perf collector initialized with background collection")
+	log.WithField("sampling_rate_ms", config.SamplingRate).Info("Perf collector initialized with interval-based collection per container")
 	return nil
 }
 
-// backgroundCollection runs perf collection in a background goroutine at high frequency
-func (p *PerfCollector) backgroundCollection(ctx context.Context) {
+// startContainerCollection starts continuous perf collection for a single container using interval approach
+func (p *PerfCollector) startContainerCollection(ctx context.Context, containerName string) {
 	defer p.wg.Done()
 	
-	// Get sampling rate from metadata provider
-	config := p.metadataProvider.GetConfig()
-	samplingRate := config.SamplingRate
-	
-	ticker := time.NewTicker(time.Duration(samplingRate) * time.Millisecond)
+	// Wait for container to be running before starting perf collection
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	
-	log.WithField("interval_ms", samplingRate).Debug("Starting background perf collection")
+	var metadata *ContainerMetadata
 	
+	// Force an immediate metadata refresh to catch newly started containers
+	if err := p.metadataProvider.RefreshContainerMetadata(); err != nil {
+		log.WithFields(log.Fields{
+			"container": containerName,
+			"error": err,
+		}).Debug("Failed to force metadata refresh")
+	}
+	
+	// Wait for container to have valid metadata (running with PID and cgroup)
+waitLoop:
 	for {
 		select {
 		case <-ctx.Done():
-			log.Debug("Background perf collection stopped due to context cancellation")
+			log.WithField("container", containerName).Debug("Context cancelled while waiting for container to start")
 			return
-		case <-p.stopChan:
-			log.Debug("Background perf collection stopped")
-			return
-		case timestamp := <-ticker.C:
-			p.collectAndBuffer(timestamp)
+		case <-ticker.C:
+			// Force a metadata refresh on each check to get latest container status
+			if err := p.metadataProvider.RefreshContainerMetadata(); err != nil {
+				log.WithFields(log.Fields{
+					"container": containerName,
+					"error": err,
+				}).Debug("Failed to refresh metadata while waiting for container")
+			}
+			
+			var err error
+			metadata, err = p.metadataProvider.GetContainerMetadata(containerName)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"container": containerName,
+					"error": err,
+				}).Debug("Failed to get container metadata")
+				continue
+			}
+			
+			log.WithFields(log.Fields{
+				"container": containerName,
+				"pid": metadata.PID,
+				"cgroup": metadata.Cgroup,
+				"has_pid": metadata.PID > 0,
+				"has_cgroup": metadata.Cgroup != "",
+			}).Debug("Container metadata debug info")
+			
+			if metadata.PID > 0 && metadata.Cgroup != "" {
+				log.WithFields(log.Fields{
+					"container": containerName,
+					"pid": metadata.PID,
+					"cgroup": metadata.Cgroup,
+				}).Debug("Container is now running, starting perf collection")
+				break waitLoop
+			}
+			
+			log.WithField("container", containerName).Debug("Waiting for container to start (PID=0 or empty cgroup)")
 		}
 	}
-}
+	
+	if metadata == nil {
+		log.WithField("container", containerName).Error("Failed to get valid container metadata")
+		return
+	}
 
-// collectAndBuffer collects perf data and updates buffers
-func (p *PerfCollector) collectAndBuffer(timestamp time.Time) {
+	// Get configuration
+	config := p.metadataProvider.GetConfig()
+	samplingRate := config.SamplingRate
+
 	// Define hardware performance events to collect
 	events := []string{
 		"cycles",           // cpu-cycles
 		"instructions",     // instructions
 		"cache-misses",     // cache-misses
-		"cache-references", // cache-references
 		"branches",         // branch-instructions
 		"branch-misses",    // branch-misses
-		"bus-cycles",       // bus-cycles
-		"ref-cycles",       // ref-cycles
-		"stalled-cycles-frontend", // stalled-cycles-frontend
-		// Cache events
-		"L1-dcache-loads",
-		"L1-dcache-load-misses",
-		"L1-dcache-stores", 
-		"L1-dcache-store-misses",
-		"L1-icache-load-misses",
-		"LLC-loads",
-		"LLC-load-misses",
-		"LLC-stores",
-		"LLC-store-misses",
+		"task-clock",       // task-clock
 	}
 
-	// Get container names from metadata provider
-	containerNames := p.metadataProvider.GetAllContainerNames()
+	log.WithFields(log.Fields{
+		"container": containerName,
+		"cgroup": metadata.Cgroup,
+		"interval_ms": samplingRate,
+		"events": events,
+	}).Info("Starting interval-based perf collection for container")
 
-	// Collect metrics for each container
-	for _, containerName := range containerNames {
-		metadata, err := p.metadataProvider.GetContainerMetadata(containerName)
-		if err != nil {
-			continue
-		}
+	// Build perf command with interval collection and cgroup filtering
+	// Using a long duration with interval sampling
+	perfCmd := exec.CommandContext(ctx, "sudo", "perf", "stat", 
+		"-e", strings.Join(events, ","),
+		"-a", 
+		"-G", metadata.Cgroup,
+		"-I", fmt.Sprintf("%d", samplingRate), // Interval in milliseconds
+		"--", "sleep", "3600") // Run for 1 hour (will be cancelled by context)
 
-		// Run perf stat with cgroup filtering  
-		// Create a short timeout for high-frequency collection
-		perfCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		
-		cmd := exec.CommandContext(perfCtx, "sudo", "perf", "stat", 
-			"-e", strings.Join(events, ","),
-			"-a", 
-			"--cgroup", metadata.Cgroup,
-			"--", "sleep", "0.01") // 10ms measurement duration
+	log.WithField("command", perfCmd.String()).Debug("Executing perf command")
 
-		output, err := cmd.CombinedOutput()
-		cancel()
-		
-		if err != nil {
-			// Continue to next container on error
-			continue
-		}
+	// Get stderr pipe - perf stat outputs to stderr
+	stderr, err := perfCmd.StderrPipe()
+	if err != nil {
+		log.WithError(err).WithField("container", containerName).Error("Failed to create stderr pipe for perf command")
+		return
+	}
 
-		// Parse and update buffer
-		perfData := p.parsePerfOutputToMap(string(output))
-		if len(perfData) > 0 {
-			p.bufferMutex.Lock()
-			if buffer, exists := p.buffers[containerName]; exists {
-				buffer.mutex.Lock()
-				buffer.data = perfData
-				buffer.timestamp = timestamp
-				buffer.mutex.Unlock()
-			}
-			p.bufferMutex.Unlock()
-			
+	// Start the command
+	if err := perfCmd.Start(); err != nil {
+		log.WithError(err).WithField("container", containerName).Error("Failed to start perf command")
+		return
+	}
+
+	log.WithFields(log.Fields{
+		"container": containerName,
+		"cgroup": metadata.Cgroup,
+		"interval_ms": samplingRate,
+		"pid": perfCmd.Process.Pid,
+	}).Info("Successfully started interval-based perf collection for container")
+
+	// Store the command and create scanner for stderr (where perf stat outputs)
+	p.bufferMutex.Lock()
+	p.containerCommands[containerName] = perfCmd
+	p.containerReaders[containerName] = bufio.NewScanner(stderr)
+	p.bufferMutex.Unlock()
+
+	// Read and process perf output in real-time
+	scanner := bufio.NewScanner(stderr)
+	lineCount := 0
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			log.WithField("container", containerName).Debug("Perf collection stopped due to context cancellation")
+			return
+		case <-p.stopChan:
+			log.WithField("container", containerName).Debug("Perf collection stopped")
+			return
+		default:
+			line := scanner.Text()
+			lineCount++
 			log.WithFields(log.Fields{
 				"container": containerName,
-				"metrics":   len(perfData),
-			}).Debug("Updated perf buffer")
+				"line_count": lineCount,
+				"line": line,
+			}).Debug("Received perf output line")
+			p.parseIntervalLine(line, containerName)
 		}
 	}
+
+	if err := scanner.Err(); err != nil {
+		log.WithError(err).WithField("container", containerName).Error("Error reading perf output")
+	}
+
+	// Wait for command to finish
+	if err := perfCmd.Wait(); err != nil && !strings.Contains(err.Error(), "signal: killed") {
+		log.WithError(err).WithField("container", containerName).Debug("Perf command finished with error (expected if cancelled)")
+	}
+
+	log.WithField("container", containerName).Info("Perf collection goroutine finished")
+}
+
+// parseIntervalLine parses a single line of perf stat interval output
+func (p *PerfCollector) parseIntervalLine(line string, containerName string) {
+	line = strings.TrimSpace(line)
+	log.WithFields(log.Fields{
+		"container": containerName,
+		"raw_line": line,
+	}).Debug("Parsing perf interval line")
+	
+	if line == "" || strings.HasPrefix(line, "#") {
+		log.WithField("container", containerName).Debug("Skipping comment or empty line")
+		return
+	}
+
+	// Parse interval output format:
+	// timestamp count unit event cgroup_path
+	parts := strings.Fields(line)
+	log.WithFields(log.Fields{
+		"container": containerName,
+		"parts_count": len(parts),
+		"parts": parts,
+	}).Debug("Split perf line into parts")
+	
+	if len(parts) < 4 {
+		log.WithField("container", containerName).Debug("Line has insufficient parts")
+		return
+	}
+
+	// Extract count (remove commas)
+	countStr := strings.ReplaceAll(parts[1], ",", "")
+	if countStr == "<not" || countStr == "" {
+		log.WithFields(log.Fields{
+			"container": containerName,
+			"count_str": countStr,
+		}).Debug("Skipping line with invalid count")
+		return
+	}
+
+	// Handle both integer and float values
+	var count uint64
+	if strings.Contains(countStr, ".") {
+		// For floating point values like task-clock, convert to milliseconds or appropriate unit
+		floatVal, err := strconv.ParseFloat(countStr, 64)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"container": containerName,
+				"count_str": countStr,
+				"error": err,
+			}).Debug("Failed to parse float count")
+			return
+		}
+		count = uint64(floatVal * 1000) // Convert to microseconds for task-clock
+	} else {
+		var err error
+		count, err = strconv.ParseUint(countStr, 10, 64)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"container": containerName,
+				"count_str": countStr,
+				"error": err,
+			}).Debug("Failed to parse count")
+			return
+		}
+	}
+
+	// Find event name - it's typically at index 2 or 3 depending on format
+	var eventName string
+	for i := 2; i < len(parts) && i < 5; i++ {
+		candidate := parts[i]
+		if candidate == "cycles" || candidate == "instructions" || candidate == "cache-misses" ||
+		   candidate == "branches" || candidate == "branch-misses" || candidate == "task-clock" {
+			eventName = candidate
+			break
+		}
+	}
+	
+	if eventName == "" {
+		log.WithFields(log.Fields{
+			"container": containerName,
+			"parts": parts,
+		}).Debug("Could not find valid event name, skipping")
+		return
+	}
+	
+	// Map event name to our standard format
+	var standardName string
+	switch eventName {
+	case "cycles":
+		standardName = "cpu_cycles"
+	case "instructions":
+		standardName = "instructions" 
+	case "cache-misses":
+		standardName = "cache_misses"
+	case "branches":
+		standardName = "branch_instructions"
+	case "branch-misses":
+		standardName = "branch_misses"
+	case "task-clock":
+		standardName = "task_clock"
+	default:
+		log.WithFields(log.Fields{
+			"container": containerName,
+			"event_name": eventName,
+		}).Debug("Unknown event name, skipping")
+		return // Skip unknown events
+	}
+
+	// Update buffer
+	p.bufferMutex.Lock()
+	if buffer, exists := p.buffers[containerName]; exists {
+		buffer.mutex.Lock()
+		buffer.data[standardName] = count
+		buffer.timestamp = time.Now()
+		buffer.mutex.Unlock()
+		
+		log.WithFields(log.Fields{
+			"container": containerName,
+			"metric": standardName,
+			"value": count,
+		}).Info("Updated perf metric")
+	} else {
+		log.WithField("container", containerName).Warn("Buffer does not exist for container")
+	}
+	p.bufferMutex.Unlock()
 }
 
 // Collect returns buffered perf measurements for all containers
@@ -223,7 +430,7 @@ func (p *PerfCollector) getContainerCgroup(pid int) (string, error) {
 	return "", fmt.Errorf("cgroup not found for PID %d", pid)
 }
 
-// Collect returns the latest buffered performance data
+// Collect returns the latest buffered performance data from interval collection
 func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]storage.Measurement, error) {
 	var measurements []storage.Measurement
 
@@ -254,8 +461,8 @@ func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]sto
 		}
 		buffer.mutex.RUnlock()
 
-		// Skip if no data available or data is too old (more than 2 seconds)
-		if len(perfData) == 0 || time.Since(bufferTimestamp) > 2*time.Second {
+		// Skip if no data available or data is too old (more than 5 seconds)
+		if len(perfData) == 0 || time.Since(bufferTimestamp) > 5*time.Second {
 			log.WithFields(log.Fields{
 				"container": containerName,
 				"data_age": time.Since(bufferTimestamp),
@@ -272,7 +479,7 @@ func (p *PerfCollector) Collect(ctx context.Context, timestamp time.Time) ([]sto
 			"container": containerName,
 			"metrics":   len(perfData),
 			"data_age":  time.Since(bufferTimestamp),
-		}).Debug("Using buffered perf data")
+		}).Debug("Using buffered interval perf data")
 	}
 
 	return measurements, nil
@@ -425,13 +632,24 @@ func (p *PerfCollector) parsePerfOutputToMap(output string) map[string]uint64 {
 	return perfData
 }
 
-// Close closes the perf collector and stops background collection
+// Close closes the perf collector and stops all interval collection processes
 func (p *PerfCollector) Close() error {
 	if p.running {
 		p.running = false
 		close(p.stopChan)
+		
+		// Terminate all perf processes
+		p.bufferMutex.Lock()
+		for containerName, cmd := range p.containerCommands {
+			if cmd != nil && cmd.Process != nil {
+				log.WithField("container", containerName).Debug("Terminating perf process")
+				cmd.Process.Kill()
+			}
+		}
+		p.bufferMutex.Unlock()
+		
 		p.wg.Wait()
-		log.Debug("Perf collector background collection stopped")
+		log.Debug("Perf collector interval collection stopped")
 	}
 	return nil
 }
