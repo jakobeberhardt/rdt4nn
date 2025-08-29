@@ -3,9 +3,9 @@ package version
 import "fmt"
 
 const (
-	Version = "1.2.0"
+	Version = "1.2.1"
 	
-	BuildDate = "2025-08-26"
+	BuildDate = "2025-08-29"
 	
 	DefaultSchedulerVersion = "1.0.0"
 	RDTSchedulerVersion     = "1.1.0"

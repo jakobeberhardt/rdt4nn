@@ -228,7 +228,7 @@ waitLoop:
 		"cgroup": metadata.Cgroup,
 		"interval_ms": samplingRate,
 		"events": events,
-	}).Info("Starting interval-based perf collection for container")
+	}).Debug("Starting interval-based perf collection for container")
 
 	// Build perf command with interval collection and cgroup filtering
 	// Using a long duration with interval sampling
@@ -259,7 +259,7 @@ waitLoop:
 		"cgroup": metadata.Cgroup,
 		"interval_ms": samplingRate,
 		"pid": perfCmd.Process.Pid,
-	}).Info("Successfully started interval-based perf collection for container")
+	}).Debug("Successfully started interval-based perf collection for container")
 
 	// Store the command and create scanner for stderr (where perf stat outputs)
 	p.bufferMutex.Lock()
@@ -299,7 +299,7 @@ waitLoop:
 		log.WithError(err).WithField("container", containerName).Debug("Perf command finished with error (expected if cancelled)")
 	}
 
-	log.WithField("container", containerName).Info("Perf collection goroutine finished")
+	log.WithField("container", containerName).Debug("Perf collection goroutine finished")
 }
 
 // parseIntervalLine parses a single line of perf stat interval output
@@ -407,7 +407,7 @@ func (p *PerfCollector) parseIntervalLine(line string, containerName string) {
 			"container": containerName,
 			"metric": standardName,
 			"value": count,
-		}).Info("Updated perf metric")
+		}).Debug("Updated perf metric")
 	} else {
 		log.WithField("container", containerName).Warn("Buffer does not exist for container")
 	}
