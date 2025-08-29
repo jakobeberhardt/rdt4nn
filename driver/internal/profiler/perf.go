@@ -186,14 +186,41 @@ waitLoop:
 	config := p.metadataProvider.GetConfig()
 	samplingRate := config.SamplingRate
 
-	// Define hardware performance events to collect
+	// Define comprehensive hardware performance events to collect
 	events := []string{
+		// Hardware events
 		"cycles",           // cpu-cycles
 		"instructions",     // instructions
 		"cache-misses",     // cache-misses
+		"cache-references", // cache-references
 		"branches",         // branch-instructions
 		"branch-misses",    // branch-misses
+		"bus-cycles",       // bus-cycles
+		"ref-cycles",       // ref-cycles
+		"stalled-cycles-frontend", // stalled-cycles-frontend
+		
+		// Software events
 		"task-clock",       // task-clock
+		"context-switches", // context-switches
+		"cpu-migrations",   // cpu-migrations
+		"page-faults",      // page-faults
+		"major-faults",     // major-faults
+		"minor-faults",     // minor-faults
+		"alignment-faults", // alignment-faults
+		
+		// Hardware cache events
+		"L1-dcache-loads",        // L1 data cache loads
+		"L1-dcache-load-misses",  // L1 data cache load misses
+		"L1-dcache-stores",       // L1 data cache stores
+		"L1-dcache-store-misses", // L1 data cache store misses
+		"L1-icache-load-misses",  // L1 instruction cache load misses
+		"LLC-loads",              // Last Level Cache loads
+		"LLC-load-misses",        // Last Level Cache load misses
+		"LLC-stores",             // Last Level Cache stores
+		"LLC-store-misses",       // Last Level Cache store misses
+		"LLC-prefetches",         // Last Level Cache prefetches
+		"LLC-prefetch-misses",    // Last Level Cache prefetch misses
+		"L1-dcache-prefetch-misses", // L1 data cache prefetch misses
 	}
 
 	log.WithFields(log.Fields{
@@ -343,8 +370,8 @@ func (p *PerfCollector) parseIntervalLine(line string, containerName string) {
 	var eventName string
 	for i := 2; i < len(parts) && i < 5; i++ {
 		candidate := parts[i]
-		if candidate == "cycles" || candidate == "instructions" || candidate == "cache-misses" ||
-		   candidate == "branches" || candidate == "branch-misses" || candidate == "task-clock" {
+		// Check for all supported event names
+		if isValidEventName(candidate) {
 			eventName = candidate
 			break
 		}
@@ -359,21 +386,8 @@ func (p *PerfCollector) parseIntervalLine(line string, containerName string) {
 	}
 	
 	// Map event name to our standard format
-	var standardName string
-	switch eventName {
-	case "cycles":
-		standardName = "cpu_cycles"
-	case "instructions":
-		standardName = "instructions" 
-	case "cache-misses":
-		standardName = "cache_misses"
-	case "branches":
-		standardName = "branch_instructions"
-	case "branch-misses":
-		standardName = "branch_misses"
-	case "task-clock":
-		standardName = "task_clock"
-	default:
+	standardName := mapEventName(eventName)
+	if standardName == "" {
 		log.WithFields(log.Fields{
 			"container": containerName,
 			"event_name": eventName,
@@ -400,7 +414,95 @@ func (p *PerfCollector) parseIntervalLine(line string, containerName string) {
 	p.bufferMutex.Unlock()
 }
 
-// Collect returns buffered perf measurements for all containers
+// isValidEventName checks if the given string is a valid perf event name
+func isValidEventName(candidate string) bool {
+	validEvents := map[string]bool{
+		// Hardware events
+		"cycles":                   true,
+		"instructions":             true,
+		"cache-misses":             true,
+		"cache-references":         true,
+		"branches":                 true,
+		"branch-misses":            true,
+		"bus-cycles":               true,
+		"ref-cycles":               true,
+		"stalled-cycles-frontend":  true,
+		"idle-cycles-frontend":     true, // Alternative name
+		
+		// Software events
+		"task-clock":               true,
+		"context-switches":         true,
+		"cs":                       true, // Alternative name
+		"cpu-migrations":           true,
+		"migrations":               true, // Alternative name
+		"page-faults":              true,
+		"faults":                   true, // Alternative name
+		"major-faults":             true,
+		"minor-faults":             true,
+		"alignment-faults":         true,
+		"cpu-clock":                true,
+		
+		// Hardware cache events
+		"L1-dcache-loads":          true,
+		"L1-dcache-load-misses":    true,
+		"L1-dcache-stores":         true,
+		"L1-dcache-store-misses":   true,
+		"L1-icache-load-misses":    true,
+		"L1-dcache-prefetch-misses": true,
+		"LLC-loads":                true,
+		"LLC-load-misses":          true,
+		"LLC-stores":               true,
+		"LLC-store-misses":         true,
+		"LLC-prefetches":           true,
+		"LLC-prefetch-misses":      true,
+	}
+	return validEvents[candidate]
+}
+
+// mapEventName maps perf event names to our standard database field names
+func mapEventName(eventName string) string {
+	eventMap := map[string]string{
+		// Hardware events
+		"cycles":                   "cpu_cycles",
+		"instructions":             "instructions",
+		"cache-misses":             "cache_misses",
+		"cache-references":         "cache_references",
+		"branches":                 "branch_instructions",
+		"branch-misses":            "branch_misses",
+		"bus-cycles":               "bus_cycles",
+		"ref-cycles":               "ref_cycles",
+		"stalled-cycles-frontend":  "stalled_cycles_frontend",
+		"idle-cycles-frontend":     "stalled_cycles_frontend", // Alternative name
+		
+		// Software events
+		"task-clock":               "task_clock",
+		"context-switches":         "context_switches",
+		"cs":                       "context_switches", // Alternative name
+		"cpu-migrations":           "cpu_migrations",
+		"migrations":               "cpu_migrations", // Alternative name
+		"page-faults":              "page_faults",
+		"faults":                   "page_faults", // Alternative name
+		"major-faults":             "major_faults",
+		"minor-faults":             "minor_faults",
+		"alignment-faults":         "alignment_faults",
+		"cpu-clock":                "cpu_clock",
+		
+		// Hardware cache events
+		"L1-dcache-loads":          "l1_dcache_loads",
+		"L1-dcache-load-misses":    "l1_dcache_load_misses",
+		"L1-dcache-stores":         "l1_dcache_stores",
+		"L1-dcache-store-misses":   "l1_dcache_store_misses",
+		"L1-icache-load-misses":    "l1_icache_load_misses",
+		"L1-dcache-prefetch-misses": "l1_dcache_prefetch_misses",
+		"LLC-loads":                "llc_loads",
+		"LLC-load-misses":          "llc_load_misses",
+		"LLC-stores":               "llc_stores",
+		"LLC-store-misses":         "llc_store_misses",
+		"LLC-prefetches":           "llc_prefetches",
+		"LLC-prefetch-misses":      "llc_prefetch_misses",
+	}
+	return eventMap[eventName]
+}
 
 // getContainerCgroup gets the cgroup path for a container
 func (p *PerfCollector) getContainerCgroup(pid int) (string, error) {
