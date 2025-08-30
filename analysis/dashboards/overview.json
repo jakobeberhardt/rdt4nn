@@ -1,0 +1,2650 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 9,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "afterRender": "",
+        "content": "## Benchmark Run {{benchmark_id}}\n### General\n**Name:** {{benchmark_name}}  \n**Description:** {{description}}  \n**Time:** {{formatDuration duration_seconds}} ({{formatTs benchmark_started}} to {{formatTs benchmark_finished}})   \n**Containers:** {{total_containers}}  \n**Driver:** v{{driver_version}}   \n**Scheduler:** {{used_scheduler}} (v{{scheduler_version}})    \n**Features:** RDT {{yesno rdt_enabled}}, perf {{yesno perf_enabled}}, Docker stats {{yesno docker_stats_enabled}}\n### Host\n**Hostname:** {{hostname}} (exec host: {{execution_host}})  \n**OS/Kernel:** {{os_info}}  {{kernel_version}}  \n**CPU:** {{cpu_vendor}} {{cpu_model}} {{total_cpu_cores}} cores / {{cpu_threads}} threads\n\n### Sampling\n**Limits:** max {{max_duration_seconds}} s    \n**Sampling Rate:** every {{sampling_frequency_ms}} ms    \n**Volume:** steps {{total_sampling_steps}}, measurements {{total_measurements}}, data {{formatBytes total_data_size_bytes}}\n\n---\n\n### Configuration\n```yaml\n{{{newline config_file}}}\n",
+        "contentPartials": [],
+        "defaultContent": "The query didn't return any results.",
+        "editor": {
+          "format": "auto",
+          "language": "handlebars"
+        },
+        "editors": [
+          "helpers"
+        ],
+        "externalStyles": [],
+        "helpers": "const hb = (typeof context !== \"undefined\" && context.handlebars) ? context.handlebars : handlebars;\r\n\r\nhb.registerHelper(\"yesno\", (v) => v ? \"enabled\" : \"disabled\");\r\n\r\nhb.registerHelper(\"formatTs\", (val) => {\r\n  if (val == null || val === \"\") return \"—\";\r\n  const n = Number(val);\r\n  const ms = n > 1e12 ? n : n * 1000;\r\n  const tzSetting = (typeof context !== \"undefined\" && context.grafana) ? context.grafana.timeZone : \"browser\";\r\n  const zone = tzSetting === \"browser\" ? Intl.DateTimeFormat().resolvedOptions().timeZone : tzSetting;\r\n  return new Date(ms).toLocaleString(undefined, {\r\n    timeZone: zone, hour12: false,\r\n    year: \"numeric\", month: \"2-digit\", day: \"2-digit\",\r\n    hour: \"2-digit\", minute: \"2-digit\", second: \"2-digit\"\r\n  });\r\n});\r\n\r\nhb.registerHelper(\"formatDuration\", (secs) => {\r\n  if (secs == null || secs === \"\") return \"—\";\r\n  const n = Number(secs);\r\n  const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = n % 60;\r\n  const parts = []; if (h) parts.push(`${h}h`); if (m) parts.push(`${m}m`); parts.push(`${s.toFixed(3)}s`);\r\n  return parts.join(\" \");\r\n});\r\n\r\nhb.registerHelper(\"formatBytes\", (b) => {\r\n  if (b == null || b === \"\") return \"—\";\r\n  const n = Number(b); if (!isFinite(n)) return String(b);\r\n  const u = [\"B\", \"KB\", \"MB\", \"GB\", \"TB\", \"PB\"]; const i = n > 0 ? Math.floor(Math.log(n) / Math.log(1024)) : 0;\r\n  const v = (n / Math.pow(1024, i)).toFixed(i ? 2 : 0); return `${v} ${u[i]}`;\r\n});\r\n\r\nhb.registerHelper(\"newline\", (s) => (s ?? \"\").replaceAll(\"\\\\n\", \"\\n\"));\r\n\r\nif (!hb.helpers.match) {\r\n  hb.registerHelper(\"match\", (str, pattern) => new RegExp(pattern).test(String(str)));\r\n}\r\n",
+        "renderMode": "everyRow",
+        "styles": "",
+        "wrap": true
+      },
+      "pluginVersion": "6.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "$__interval"
+              ],
+              "type": "time"
+            },
+            {
+              "params": [
+                "null"
+              ],
+              "type": "fill"
+            }
+          ],
+          "hide": false,
+          "measurement": "benchmark_meta",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT * FROM \"benchmark_meta\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) ORDER BY time DESC ",
+          "rawQuery": true,
+          "refId": "A",
+          "resultFormat": "table",
+          "select": [
+            [
+              {
+                "params": [
+                  "hostname"
+                ],
+                "type": "field"
+              },
+              {
+                "params": [],
+                "type": "distinct"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Benchmark Info",
+      "type": "marcusolsson-dynamictext-panel"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "docker_cpu_usage_percent"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "CPU Usage (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "docker_cpu_usage_total"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "CPU Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_cache_miss_rate"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Cache Misses (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_instructions"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Instructions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_cache_references"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Cache References",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_cache_misses"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Cache Misses",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_ipc"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Instructions per Cycle",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_stalled_cycles_frontend"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Cycles Stalled (Frontend)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_l1_dcache_loads"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "L1 Data Loads",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_l1_dcache_load_misses"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "L1 Data Load Misses",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 49
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_branch_instructions"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Branch Instructions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 49
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_branch_misses"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Mispredicted Branch Instructions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 57
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_cpu_migrations"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "CPU Migrations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "sishort"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 57
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "perf_page_faults"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Page Faults",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "docker_memory_usage_percent"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Memory Usage (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "docker_memory_usage"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Memory Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 73
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "docker_network_rx_bytes"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Network Download",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "cew2d4vayrf9cd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 73
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "alias": "$tag_container_name-$tag_container_image",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "cew2d4vayrf9cd"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "container_index::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_name::tag"
+              ],
+              "type": "tag"
+            },
+            {
+              "params": [
+                "container_image::tag"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "benchmark_metrics",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"docker_cpu_usage_percent\" FROM \"benchmark_metrics\" WHERE (\"benchmark_id\"::tag =~ /^$benchmark_id$/) AND $timeFilter GROUP BY \"container_index\"::tag",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "docker_network_tx_bytes"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "benchmark_id::tag",
+              "operator": "=~",
+              "value": "/^$benchmark_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Network Upload",
+      "type": "timeseries"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": "220",
+          "value": "220"
+        },
+        "datasource": {
+          "type": "influxdb",
+          "uid": "cew2d4vayrf9cd"
+        },
+        "definition": "SHOW TAG VALUES FROM \"benchmark_metrics\" WITH KEY = \"benchmark_id\"",
+        "name": "benchmark_id",
+        "options": [],
+        "query": {
+          "query": "SHOW TAG VALUES FROM \"benchmark_metrics\" WITH KEY = \"benchmark_id\"",
+          "refId": "InfluxVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 8,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "2025-08-30T09:50:19.616Z",
+    "to": "2025-08-30T09:51:21.540Z"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Benchmark Overview",
+  "uid": "f5476e4f-ca7a-4127-a3e9-1a080e66a5e5",
+  "version": 89
+}
