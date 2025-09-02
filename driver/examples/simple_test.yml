@@ -1,8 +1,8 @@
 benchmark:
   name: Test
   description: A simple test benchmark which starts three containers in a sequence.
-  max_t: 60
-  log_level: info
+  max_t: 20
+  log_level: debug
   scheduler:
     implementation: default
     rdt: false  
@@ -17,13 +17,18 @@ benchmark:
     rdt: false
     perf: true
     dockerstats: true
+  docker:
+    auth:
+      registry: ${DOCKER_REGISTRY_HOST}
+      username: ${DOCKER_REGISTRY_USERNAME}
+      password: ${DOCKER_REGISTRY_PASSWORD}
 
 container0:
   index: 0
   image: nginx:alpine
   start: 0
   core: 0
-  command: "while :; do dd if=/dev/zero of=/dev/null bs=1M count=100 2>/dev/null; done"
+  command: "sleep 20 && while :; do dd if=/dev/zero of=/dev/null bs=1M count=100 2>/dev/null; done"
 container1:
   index: 1
   image: nginx:alpine
