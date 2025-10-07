@@ -11,103 +11,54 @@ on:
       - 'images/**'
 
 jobs:
-  detect-changes:
+  find-images:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
-      has-changes: ${{ steps.set-matrix.outputs.has-changes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
-        with:
-          files: images/**
-          dir_names: true
-          dir_names_max_depth: 4
-
-      - name: Set matrix for changed image directories
+      - name: Find all Dockerfiles and create matrix
         id: set-matrix
         run: |
-          echo "Changed directories: ${{ steps.changed-files.outputs.all_changed_files }}"
+          echo "Finding all Dockerfiles in images/ directory..."
           
-          # Initialize array for image directories
+          # Find all directories containing Dockerfiles
           image_dirs=()
-          
-          # Process each changed directory
-          for dir in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            echo "Processing directory: $dir"
+          while IFS= read -r -d '' dockerfile; do
+            # Get the directory containing the Dockerfile
+            dir=$(dirname "$dockerfile")
+            # Extract tag by removing 'images/' prefix
+            tag=$(echo "$dir" | sed 's|^images/||')
             
-            # Find directories that contain a Dockerfile
-            if [ -f "$dir/Dockerfile" ]; then
-              # Extract the tag from the directory path
-              # Remove 'images/' prefix and use the rest as tag
-              tag=$(echo "$dir" | sed 's|^images/||')
-              
-              # Add to array as JSON object
-              image_dirs+=("{\"directory\":\"$dir\",\"tag\":\"$tag\"}")
-              echo "Found image directory: $dir -> tag: $tag"
-            else
-              # Check if any subdirectories contain Dockerfiles
-              find "$dir" -name "Dockerfile" -type f | while read dockerfile; do
-                dockerfile_dir=$(dirname "$dockerfile")
-                tag=$(echo "$dockerfile_dir" | sed 's|^images/||')
-                image_dirs+=("{\"directory\":\"$dockerfile_dir\",\"tag\":\"$tag\"}")
-                echo "Found image directory: $dockerfile_dir -> tag: $tag"
-              done
-            fi
-          done
+            image_dirs+=("{\"directory\":\"$dir\",\"tag\":\"$tag\"}")
+            echo "Found image: $dir -> tag: $tag"
+          done < <(find images -name "Dockerfile" -type f -print0)
           
-          # Alternative approach: scan all changed files and find their containing directories with Dockerfiles
-          changed_image_dirs=()
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            # Get the directory of the changed file
-            file_dir=$(dirname "$file")
-            
-            # Walk up the directory tree to find a Dockerfile
-            current_dir="$file_dir"
-            while [ "$current_dir" != "images" ] && [ "$current_dir" != "." ]; do
-              if [ -f "$current_dir/Dockerfile" ]; then
-                tag=$(echo "$current_dir" | sed 's|^images/||')
-                # Check if we haven't already added this directory
-                if [[ ! " ${changed_image_dirs[@]} " =~ " {\"directory\":\"$current_dir\",\"tag\":\"$tag\"} " ]]; then
-                  changed_image_dirs+=("{\"directory\":\"$current_dir\",\"tag\":\"$tag\"}")
-                  echo "Found changed image directory: $current_dir -> tag: $tag"
-                fi
-                break
-              fi
-              current_dir=$(dirname "$current_dir")
-            done
-          done
-          
-          # Create JSON array
-          if [ ${#changed_image_dirs[@]} -eq 0 ]; then
-            echo "has-changes=false" >> $GITHUB_OUTPUT
+          # Create JSON matrix
+          if [ ${#image_dirs[@]} -eq 0 ]; then
             echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+            echo "No Dockerfiles found in images/ directory"
           else
-            echo "has-changes=true" >> $GITHUB_OUTPUT
             matrix_json="{\"include\":["
-            for i in "${!changed_image_dirs[@]}"; do
+            for i in "${!image_dirs[@]}"; do
               if [ $i -gt 0 ]; then
                 matrix_json+=","
               fi
-              matrix_json+="${changed_image_dirs[$i]}"
+              matrix_json+="${image_dirs[$i]}"
             done
             matrix_json+="]}"
             echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
-            echo "Generated matrix: $matrix_json"
+            echo "Generated matrix for ${#image_dirs[@]} images: $matrix_json"
           fi
 
   build-and-push:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.has-changes == 'true'
+    needs: find-images
+    if: needs.find-images.outputs.matrix != '{"include":[]}'
     runs-on: ubuntu-latest
     strategy:
-      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.find-images.outputs.matrix) }}
       fail-fast: false
     steps:
       - name: Checkout code
