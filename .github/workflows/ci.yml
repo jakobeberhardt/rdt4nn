@@ -1,177 +1,158 @@
-name: CI/CD Pipeline
+name: Build and Push Docker Images
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
+    paths:
+      - 'images/**'
   pull_request:
     branches: [ main ]
-  release:
-    types: [ created ]
-
-env:
-  GO_VERSION: '1.21'
-  BINARY_NAME: 'rdt4nn-driver'
+    paths:
+      - 'images/**'
 
 jobs:
-  test:
-    name: Test
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-changes: ${{ steps.set-matrix.outputs.has-changes }}
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
-    
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-    
-    - name: Download dependencies
-      working-directory: ./driver
-      run: go mod download
-    
-    - name: Run tests
-      working-directory: ./driver
-      run: go test -v ./...
-    
-    - name: Run linter
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        working-directory: ./driver
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  build:
-    name: Build
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+        with:
+          files: images/**
+          dir_names: true
+          dir_names_max_depth: 4
+
+      - name: Set matrix for changed image directories
+        id: set-matrix
+        run: |
+          echo "Changed directories: ${{ steps.changed-files.outputs.all_changed_files }}"
+          
+          # Initialize array for image directories
+          image_dirs=()
+          
+          # Process each changed directory
+          for dir in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo "Processing directory: $dir"
+            
+            # Find directories that contain a Dockerfile
+            if [ -f "$dir/Dockerfile" ]; then
+              # Extract the tag from the directory path
+              # Remove 'images/' prefix and use the rest as tag
+              tag=$(echo "$dir" | sed 's|^images/||')
+              
+              # Add to array as JSON object
+              image_dirs+=("{\"directory\":\"$dir\",\"tag\":\"$tag\"}")
+              echo "Found image directory: $dir -> tag: $tag"
+            else
+              # Check if any subdirectories contain Dockerfiles
+              find "$dir" -name "Dockerfile" -type f | while read dockerfile; do
+                dockerfile_dir=$(dirname "$dockerfile")
+                tag=$(echo "$dockerfile_dir" | sed 's|^images/||')
+                image_dirs+=("{\"directory\":\"$dockerfile_dir\",\"tag\":\"$tag\"}")
+                echo "Found image directory: $dockerfile_dir -> tag: $tag"
+              done
+            fi
+          done
+          
+          # Alternative approach: scan all changed files and find their containing directories with Dockerfiles
+          changed_image_dirs=()
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # Get the directory of the changed file
+            file_dir=$(dirname "$file")
+            
+            # Walk up the directory tree to find a Dockerfile
+            current_dir="$file_dir"
+            while [ "$current_dir" != "images" ] && [ "$current_dir" != "." ]; do
+              if [ -f "$current_dir/Dockerfile" ]; then
+                tag=$(echo "$current_dir" | sed 's|^images/||')
+                # Check if we haven't already added this directory
+                if [[ ! " ${changed_image_dirs[@]} " =~ " {\"directory\":\"$current_dir\",\"tag\":\"$tag\"} " ]]; then
+                  changed_image_dirs+=("{\"directory\":\"$current_dir\",\"tag\":\"$tag\"}")
+                  echo "Found changed image directory: $current_dir -> tag: $tag"
+                fi
+                break
+              fi
+              current_dir=$(dirname "$current_dir")
+            done
+          done
+          
+          # Create JSON array
+          if [ ${#changed_image_dirs[@]} -eq 0 ]; then
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+          else
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+            matrix_json="{\"include\":["
+            for i in "${!changed_image_dirs[@]}"; do
+              if [ $i -gt 0 ]; then
+                matrix_json+=","
+              fi
+              matrix_json+="${changed_image_dirs[$i]}"
+            done
+            matrix_json+="]}"
+            echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
+            echo "Generated matrix: $matrix_json"
+          fi
+
+  build-and-push:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-changes == 'true'
     runs-on: ubuntu-latest
-    needs: test
     strategy:
-      matrix:
-        goos: [linux, darwin]
-        goarch: [amd64, arm64]
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
-    
-    - name: Build binary
-      working-directory: ./driver
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-      run: |
-        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
-        COMMIT=$(git rev-parse --short HEAD)
-        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
-        LDFLAGS="-ldflags -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}"
-        go build $LDFLAGS -o ${BINARY_NAME}-${{ matrix.goos }}-${{ matrix.goarch }} .
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: ./driver/${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  validate-configs:
-    name: Validate Configurations
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
-    
-    - name: Build driver
-      working-directory: ./driver
-      run: go build -o ${{ env.BINARY_NAME }} .
-    
-    - name: Validate example configurations
-      working-directory: ./driver
-      run: |
-        ./${{ env.BINARY_NAME }} validate -c examples/simple_test.yml
-        ./${{ env.BINARY_NAME }} validate -c examples/redis_nginx_benchmark.yml
-        ./${{ env.BINARY_NAME }} validate -c examples/memory_intensive.yml
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-  docker:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: Login to Docker Hub
-      if: github.event_name != 'pull_request'
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_HUB_USERNAME }}
-        password: ${{ secrets.DOCKER_HUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: jakobeberhardt/rdt4nn-driver
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-    
-    - name: Build and push
-      uses: docker/build-push-action@v5
-      with:
-        context: ./driver
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        platforms: linux/amd64,linux/arm64
-
-  release:
-    name: Release
-    runs-on: ubuntu-latest
-    needs: [build, validate-configs]
-    if: github.event_name == 'release'
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v3
-    
-    - name: Create release archive
-      run: |
-        mkdir -p release
-        for dir in ${{ env.BINARY_NAME }}-*; do
-          if [ -d "$dir" ]; then
-            cp -r "$dir"/* release/
+      - name: Extract registry info
+        id: registry-info
+        run: |
+          tag="${{ matrix.tag }}"
+          echo "Full tag: $tag"
+          
+          # Extract registry (everything before the first '/')
+          if [[ "$tag" == *"/"* ]]; then
+            registry=$(echo "$tag" | cut -d'/' -f1)
+            echo "registry=$registry" >> $GITHUB_OUTPUT
+            echo "Registry: $registry"
+          else
+            echo "registry=docker.io" >> $GITHUB_OUTPUT
+            echo "Registry: docker.io (default)"
           fi
-        done
-        
-        # Create archives
-        cd release
-        for binary in ${{ env.BINARY_NAME }}-*; do
-          if [ -f "$binary" ]; then
-            OS_ARCH=$(echo "$binary" | sed 's/^${{ env.BINARY_NAME }}-//')
-            tar -czf "${{ env.BINARY_NAME }}-${OS_ARCH}.tar.gz" "$binary"
-            sha256sum "${{ env.BINARY_NAME }}-${OS_ARCH}.tar.gz" > "${{ env.BINARY_NAME }}-${OS_ARCH}.tar.gz.sha256"
-          fi
-        done
-    
-    - name: Upload release assets
-      uses: softprops/action-gh-release@v1
-      with:
-        files: release/*.tar.gz*
-        generate_release_notes: true
+          
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+
+      - name: Log in to Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.registry-info.outputs.registry }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.directory }}
+          file: ${{ matrix.directory }}/Dockerfile
+          push: true
+          tags: |
+            ${{ matrix.tag }}:latest
+            ${{ matrix.tag }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Image digest
+        run: echo "Image pushed successfully with tag ${{ matrix.tag }}"
