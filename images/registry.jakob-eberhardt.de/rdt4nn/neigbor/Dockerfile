@@ -6,4 +6,4 @@ RUN gcc -o neighbor neighbor.c -static
 RUN cp neighbor /neighbor && rm -rf /app
 RUN apk del gcc musl-dev
 WORKDIR /
-CMD ["sleep", "infinity"]
+CMD ["sleep", "infinity"] 
