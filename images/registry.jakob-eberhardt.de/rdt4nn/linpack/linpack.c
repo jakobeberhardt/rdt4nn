@@ -8,7 +8,7 @@
 ** Modified by Will Menninger, 10/93, with these features:
 **  (modified on 2/25/94  to fix a problem with daxpy  for
 **   unequal increments or equal increments not equal to 1.
-**     Jack Dongarra)
+**     Jack Dongarra) 
 **
 ** - Defaults to double precision.
 ** - Averages ROLLed and UNROLLed performance.
