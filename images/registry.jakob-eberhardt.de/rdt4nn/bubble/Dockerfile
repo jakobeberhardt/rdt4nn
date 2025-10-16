@@ -14,5 +14,4 @@ RUN apt-get update && \
 
 COPY --from=builder /build/bubble /usr/local/bin/bubble
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/bubble"]
-CMD ["--max-size", "100"]
+ENTRYPOINT ["/usr/local/bin/bubble"]
