@@ -1,54 +1,42 @@
-#define _DEFAULT_SOURCE  
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <omp.h>
 #include <unistd.h>
+#include <omp.h>
 #include <time.h>
+#include <getopt.h>
 #include <signal.h>
-#include <sys/time.h>
 
-// LFSR random number generator thread local storage for OpenMP
-_Thread_local unsigned lfsr = 1;
-#define MASK 0xd0000001u
-#define rand() (lfsr = (lfsr >> 1) ^ (unsigned int)((0 - (lfsr & 1u)) & MASK))
+#define LFSR_MASK 0xd0000001u
+#define MB_TO_BYTES(mb) ((mb) * 1024 * 1024)
+#define DUMP_SIZE 100
+#define CHECK_INTERVAL 10000
 
-// Configuration structure
+static volatile sig_atomic_t keep_running = 1;
+
+void signal_handler(int signum) {
+    keep_running = 0;
+}
+
 typedef struct {
-    int min_working_set_mb;
-    int max_working_set_mb;
+    size_t min_working_size_mb;
+    size_t max_working_size_mb;
+    int ramp_time_sec;
     int num_threads;
-    int runtime_seconds;
-    double pressure_level; // 0.0 to 1.0
+    int streaming_ratio;
 } bubble_config_t;
 
-// Global variables
-volatile int stop_flag = 0;
-bubble_config_t config;
-
-void signal_handler(int sig) {
-    (void)sig; 
-    stop_flag = 1;
-    if (sig == SIGALRM) {
-        printf("Runtime limit reached, stopping threads...\n");
-    }
+static inline unsigned lfsr_rand(unsigned *lfsr) {
+    *lfsr = (*lfsr >> 1) ^ (unsigned)((0 - (*lfsr & 1u)) & LFSR_MASK);
+    return *lfsr;
 }
 
-// Initialize LFSR with thread-specific seed
-void init_thread_lfsr(int thread_id) {
-    lfsr = 1 + thread_id; // Each thread gets a different seed
-}
-
-// Manual SSA memory operations for maximum parallelism
-void random_memory_ops(double *data_chunk, int footprint_size, int thread_id) {
-    int dump[100] = {0}; // Initialize dump array
+void random_access_kernel(int *data_chunk, size_t footprint_size, unsigned *lfsr) {
+    int dump[DUMP_SIZE] = {0};
+    unsigned long iter = 0;
     
-    printf("Thread %d started with random access pattern, working set size: %d elements\n", 
-           thread_id, footprint_size);
-    
-    while (!stop_flag) {
-        unsigned r = rand() % footprint_size;
+    while (1) {
+        unsigned r = lfsr_rand(lfsr) % footprint_size;
         
         dump[0] += data_chunk[r]++;
         dump[1] += data_chunk[r]++;
@@ -150,145 +138,239 @@ void random_memory_ops(double *data_chunk, int footprint_size, int thread_id) {
         dump[97] += data_chunk[r]++;
         dump[98] += data_chunk[r]++;
         dump[99] += data_chunk[r]++;
+        
+        if (++iter % CHECK_INTERVAL == 0 && !keep_running) {
+            break;
+        }
     }
-    
-    printf("Thread %d finished random access\n", thread_id);
 }
 
-// Streaming memory access pattern (based on STREAM benchmark)
-void streaming_memory_ops(double *bw_data, int bw_stream_size, int thread_id) {
+void streaming_kernel(double *bw_data, size_t stream_size) {
     double scalar = 3.0;
+    unsigned long iter = 0;
     
-    printf("Thread %d started with streaming access pattern, working set size: %d elements\n", 
-           thread_id, bw_stream_size);
-    
-    while (!stop_flag) {
-        double *mid = bw_data + (bw_stream_size / 2);
+    while (1) {
+        double *mid = bw_data + (stream_size / 2);
         
-        for (int i = 0; i < bw_stream_size / 2; i++) {
+        for (size_t i = 0; i < stream_size / 2; i++) {
             bw_data[i] = scalar * mid[i];
         }
-
-        for (int i = 0; i < bw_stream_size / 2; i++) {
+        
+        for (size_t i = 0; i < stream_size / 2; i++) {
             mid[i] = scalar * bw_data[i];
         }
+        
+        if (++iter % CHECK_INTERVAL == 0 && !keep_running) {
+            break;
+        }
     }
-    
-    printf("Thread %d finished streaming access\n", thread_id);
 }
 
-// Calculate working set size based on pressure level
-int calculate_working_set_size(double pressure_level, int min_size, int max_size) {
-    return min_size + (int)(pressure_level * (max_size - min_size));
+void run_bubble(bubble_config_t *config) {
+    size_t current_size_mb = config->min_working_size_mb;
+    size_t max_size_mb = config->max_working_size_mb;
+    int ramp_steps = config->ramp_time_sec > 0 ? config->ramp_time_sec : 0;
+    size_t step_size_mb = ramp_steps > 0 ? (max_size_mb - current_size_mb) / ramp_steps : 0;
+    
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
+    omp_set_num_threads(config->num_threads);
+    
+    printf("Bubble Configuration:\n");
+    printf("  Threads: %d\n", config->num_threads);
+    printf("  Working Set: %zu MB -> %zu MB\n", config->min_working_size_mb, config->max_working_size_mb);
+    if (config->ramp_time_sec > 0) {
+        printf("  Ramp Time: %d seconds (will exit after)\n", config->ramp_time_sec);
+    } else {
+        printf("  Ramp Time: none (runs indefinitely)\n");
+    }
+    printf("  Streaming Ratio: %d%%\n", config->streaming_ratio);
+    printf("\n");
+    fflush(stdout);
+    
+    if (ramp_steps > 0) {
+        for (int step = 0; step <= ramp_steps && keep_running; step++) {
+            if (step > 0) {
+                current_size_mb += step_size_mb;
+                if (current_size_mb > max_size_mb) {
+                    current_size_mb = max_size_mb;
+                }
+            }
+            
+            size_t current_bytes = MB_TO_BYTES(current_size_mb);
+            size_t int_elements = current_bytes / sizeof(int);
+            size_t double_elements = current_bytes / sizeof(double);
+            
+            printf("Step %d/%d: Working set = %zu MB\n", step, ramp_steps, current_size_mb);
+            fflush(stdout);
+            
+            int *random_data = (int *)malloc(current_bytes);
+            double *stream_data = (double *)malloc(current_bytes);
+            
+            if (!random_data || !stream_data) {
+                fprintf(stderr, "Memory allocation failed for %zu MB\n", current_size_mb);
+                exit(1);
+            }
+            
+            memset(random_data, 0, current_bytes);
+            memset(stream_data, 0, current_bytes);
+            
+            time_t start_time = time(NULL);
+            
+            #pragma omp parallel
+            {
+                int tid = omp_get_thread_num();
+                unsigned lfsr = 0xACE1u + tid;
+                
+                int do_streaming = (tid * 100 / config->num_threads) < config->streaming_ratio;
+                
+                while (keep_running && (time(NULL) - start_time < 1)) {
+                    if (do_streaming) {
+                        double *mid = stream_data + (double_elements / 2);
+                        double scalar = 3.0;
+                        for (size_t i = 0; i < double_elements / 2; i++) {
+                            stream_data[i] = scalar * mid[i];
+                        }
+                        for (size_t i = 0; i < double_elements / 2; i++) {
+                            mid[i] = scalar * stream_data[i];
+                        }
+                    } else {
+                        int dump[DUMP_SIZE] = {0};
+                        for (int j = 0; j < 1000; j++) {
+                            unsigned r = lfsr_rand(&lfsr) % int_elements;
+                            for (int k = 0; k < DUMP_SIZE; k++) {
+                                dump[k] += random_data[r]++;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            free(random_data);
+            free(stream_data);
+        }
+        printf("\nRamp complete, exiting.\n");
+    } else {
+        current_size_mb = max_size_mb;
+        size_t current_bytes = MB_TO_BYTES(current_size_mb);
+        size_t int_elements = current_bytes / sizeof(int);
+        size_t double_elements = current_bytes / sizeof(double);
+        
+        printf("Running at %zu MB (no ramp)\n", current_size_mb);
+        fflush(stdout);
+        
+        int *random_data = (int *)malloc(current_bytes);
+        double *stream_data = (double *)malloc(current_bytes);
+        
+        if (!random_data || !stream_data) {
+            fprintf(stderr, "Memory allocation failed for %zu MB\n", current_size_mb);
+            exit(1);
+        }
+        
+        memset(random_data, 0, current_bytes);
+        memset(stream_data, 0, current_bytes);
+        
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            unsigned lfsr = 0xACE1u + tid;
+            
+            int do_streaming = (tid * 100 / config->num_threads) < config->streaming_ratio;
+            
+            if (do_streaming) {
+                streaming_kernel(stream_data, double_elements);
+            } else {
+                random_access_kernel(random_data, int_elements, &lfsr);
+            }
+        }
+        
+        free(random_data);
+        free(stream_data);
+    }
+    
+    if (!keep_running) {
+        printf("\nBubble terminated by signal\n");
+    }
 }
 
-// Load configuration from environment variables or use defaults
-void load_config() {
-    char *env_val;
-    
-    // Default configuration
-    config.min_working_set_mb = 1;
-    config.max_working_set_mb = 1024;
-    config.num_threads = 4;
-    config.runtime_seconds = 60;
-    config.pressure_level = 0.5;
-    
-
-    if ((env_val = getenv("BUBBLE_MIN_WORKING_SET_MB")) != NULL) {
-        config.min_working_set_mb = atoi(env_val);
-    }
-    if ((env_val = getenv("BUBBLE_MAX_WORKING_SET_MB")) != NULL) {
-        config.max_working_set_mb = atoi(env_val);
-    }
-    if ((env_val = getenv("BUBBLE_NUM_THREADS")) != NULL) {
-        config.num_threads = atoi(env_val);
-    }
-    if ((env_val = getenv("BUBBLE_RUNTIME_SECONDS")) != NULL) {
-        config.runtime_seconds = atoi(env_val);
-    }
-    if ((env_val = getenv("BUBBLE_PRESSURE_LEVEL")) != NULL) {
-        config.pressure_level = atof(env_val);
-        if (config.pressure_level < 0.0) config.pressure_level = 0.0;
-        if (config.pressure_level > 1.0) config.pressure_level = 1.0;
-    }
-    
-    printf("Configuration:\n");
-    printf("  Min working set: %d MB\n", config.min_working_set_mb);
-    printf("  Max working set: %d MB\n", config.max_working_set_mb);
-    printf("  Number of threads: %d\n", config.num_threads);
-    printf("  Runtime: %d seconds\n", config.runtime_seconds);
-    printf("  Pressure level: %.2f\n", config.pressure_level);
+void print_usage(const char *prog_name) {
+    printf("Usage: %s [OPTIONS]\n", prog_name);
+    printf("\nMemory Pressure Bubble for Container Interference Studies\n\n");
+    printf("Options:\n");
+    printf("  --min-size MB          Minimum working set size in MB (default: 1)\n");
+    printf("  --max-size MB          Maximum working set size in MB (default: 100)\n");
+    printf("  --ramp-time SECONDS    Time to ramp from min to max in seconds (default: 0)\n");
+    printf("  --threads N            Number of threads (default: system cores)\n");
+    printf("  --streaming-ratio %%    Percentage of threads doing streaming (default: 50)\n");
+    printf("  -h, --help             Show this help message\n");
+    printf("\nExamples:\n");
+    printf("  %s --max-size 1024\n", prog_name);
+    printf("  %s --min-size 10 --max-size 1000 --ramp-time 60\n", prog_name);
+    printf("  %s --threads 4 --streaming-ratio 25\n", prog_name);
 }
 
 int main(int argc, char *argv[]) {
-
-    load_config();
+    bubble_config_t config = {
+        .min_working_size_mb = 1,
+        .max_working_size_mb = 100,
+        .ramp_time_sec = 0,
+        .num_threads = omp_get_max_threads(),
+        .streaming_ratio = 50
+    };
     
-    if (argc > 1) {
-        config.pressure_level = atof(argv[1]);
-        if (config.pressure_level < 0.0) config.pressure_level = 0.0;
-        if (config.pressure_level > 1.0) config.pressure_level = 1.0;
-        printf("Pressure level overridden by command line: %.2f\n", config.pressure_level);
-    }
+    static struct option long_options[] = {
+        {"min-size", required_argument, 0, 'm'},
+        {"max-size", required_argument, 0, 'M'},
+        {"ramp-time", required_argument, 0, 'r'},
+        {"threads", required_argument, 0, 't'},
+        {"streaming-ratio", required_argument, 0, 's'},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
     
-    // Setup signal handling
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-    signal(SIGALRM, signal_handler);
+    int opt;
+    int option_index = 0;
     
-    omp_set_num_threads(config.num_threads);
-    
-    // Calculate actual working set size based on pressure level
-    int working_set_size = calculate_working_set_size(
-        config.pressure_level, 
-        config.min_working_set_mb, 
-        config.max_working_set_mb
-    );
-    
-    printf("Starting bubble with working set size: %d MB (pressure: %.2f)\n", 
-           working_set_size, config.pressure_level);
-    printf("Using %d OpenMP threads\n", config.num_threads);
-    
-    // Calculate elements per working set
-    int elements_per_working_set = working_set_size * 1024 * 1024 / sizeof(double);
-    
-    // Allocate shared memory for all threads
-    size_t total_data_size = (size_t)config.num_threads * working_set_size * 1024 * 1024;
-    double *shared_data = malloc(total_data_size);
-    if (!shared_data) {
-        fprintf(stderr, "Failed to allocate %zu bytes for shared data\n", total_data_size);
-        return 1;
-    }
-    
-    printf("Initializing %zu MB of memory...\n", total_data_size / (1024 * 1024));
-    for (size_t i = 0; i < total_data_size / sizeof(double); i++) {
-        shared_data[i] = (double)(i % 1000) + 1.0;
-    }
-    
-    printf("Starting parallel execution...\n");
-    
-    if (config.runtime_seconds > 0) {
-        alarm(config.runtime_seconds);
-    }
-    
-    #pragma omp parallel
-    {
-        int thread_id = omp_get_thread_num();
-        
-        init_thread_lfsr(thread_id);
-        
-        double *thread_data = shared_data + (thread_id * elements_per_working_set);
-        
-        if (thread_id % 2 == 0) {
-            random_memory_ops(thread_data, elements_per_working_set, thread_id);
-        } else {
-            streaming_memory_ops(thread_data, elements_per_working_set, thread_id);
+    while ((opt = getopt_long(argc, argv, "h", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'm':
+                config.min_working_size_mb = atoi(optarg);
+                break;
+            case 'M':
+                config.max_working_size_mb = atoi(optarg);
+                break;
+            case 'r':
+                config.ramp_time_sec = atoi(optarg);
+                break;
+            case 't':
+                config.num_threads = atoi(optarg);
+                break;
+            case 's':
+                config.streaming_ratio = atoi(optarg);
+                if (config.streaming_ratio < 0) config.streaming_ratio = 0;
+                if (config.streaming_ratio > 100) config.streaming_ratio = 100;
+                break;
+            case 'h':
+                print_usage(argv[0]);
+                return 0;
+            default:
+                print_usage(argv[0]);
+                return 1;
         }
     }
     
-    printf("All threads completed\n");
+    if (config.min_working_size_mb > config.max_working_size_mb) {
+        fprintf(stderr, "Error: min-size cannot be greater than max-size\n");
+        return 1;
+    }
     
-    free(shared_data);
-    printf("Bubble execution completed\n");
+    if (config.num_threads < 1) {
+        fprintf(stderr, "Error: threads must be at least 1\n");
+        return 1;
+    }
+    
+    run_bubble(&config);
+    
     return 0;
 }

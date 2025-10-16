@@ -1,19 +1,18 @@
-FROM ubuntu:22.04
-RUN apt-get update && apt-get install -y \
-    gcc \
-    make \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
+FROM gcc:12-bullseye AS builder
+
+WORKDIR /build
+
 COPY bubble.c .
-COPY bubble.conf .
-COPY run_bubble.sh .
-COPY Makefile .
-RUN make release
-RUN useradd -m -s /bin/bash bubble
-USER bubble
-ENV BUBBLE_MIN_WORKING_SET_MB=1
-ENV BUBBLE_MAX_WORKING_SET_MB=1024
-ENV BUBBLE_NUM_THREADS=4
-ENV BUBBLE_RUNTIME_SECONDS=60
-ENV BUBBLE_PRESSURE_LEVEL=0.5
-CMD ["./run_bubble.sh"]
+
+RUN gcc -O3 -fopenmp -o bubble bubble.c -lm
+
+FROM debian:bullseye-slim
+
+RUN apt-get update && \
+    apt-get install -y libgomp1 tini && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/bubble /usr/local/bin/bubble
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/bubble"]
+CMD ["--max-size", "100"]
