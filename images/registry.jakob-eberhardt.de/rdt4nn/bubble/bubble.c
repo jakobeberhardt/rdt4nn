@@ -24,6 +24,7 @@ typedef struct {
     int ramp_time_sec;
     int num_threads;
     int streaming_ratio;
+    int debug_mode;
 } bubble_config_t;
 
 static inline unsigned lfsr_rand(unsigned *lfsr) {
@@ -202,8 +203,10 @@ void run_bubble(bubble_config_t *config) {
             size_t int_elements = current_bytes / sizeof(int);
             size_t double_elements = current_bytes / sizeof(double);
             
-            printf("Step %d/%d: Working set = %zu MB\n", step, ramp_steps, current_size_mb);
-            fflush(stdout);
+            if (config->debug_mode) {
+                printf("Step %d/%d: Working set = %zu MB\n", step, ramp_steps, current_size_mb);
+                fflush(stdout);
+            }
             
             int *random_data = (int *)malloc(current_bytes);
             double *stream_data = (double *)malloc(current_bytes);
@@ -257,8 +260,10 @@ void run_bubble(bubble_config_t *config) {
         size_t int_elements = current_bytes / sizeof(int);
         size_t double_elements = current_bytes / sizeof(double);
         
-        printf("Running at %zu MB (no ramp)\n", current_size_mb);
-        fflush(stdout);
+        if (config->debug_mode) {
+            printf("Running at %zu MB (no ramp)\n", current_size_mb);
+            fflush(stdout);
+        }
         
         int *random_data = (int *)malloc(current_bytes);
         double *stream_data = (double *)malloc(current_bytes);
@@ -303,11 +308,12 @@ void print_usage(const char *prog_name) {
     printf("  --ramp-time SECONDS    Time to ramp from min to max in seconds (default: 0)\n");
     printf("  --threads N            Number of threads (default: system cores)\n");
     printf("  --streaming-ratio %%    Percentage of threads doing streaming (default: 50)\n");
+    printf("  --debug                Enable debug output (default: off)\n");
     printf("  -h, --help             Show this help message\n");
     printf("\nExamples:\n");
     printf("  %s --max-size 1024\n", prog_name);
     printf("  %s --min-size 10 --max-size 1000 --ramp-time 60\n", prog_name);
-    printf("  %s --threads 4 --streaming-ratio 25\n", prog_name);
+    printf("  %s --threads 4 --streaming-ratio 25 --debug\n", prog_name);
 }
 
 int main(int argc, char *argv[]) {
@@ -316,7 +322,8 @@ int main(int argc, char *argv[]) {
         .max_working_size_mb = 100,
         .ramp_time_sec = 0,
         .num_threads = omp_get_max_threads(),
-        .streaming_ratio = 50
+        .streaming_ratio = 50,
+        .debug_mode = 0
     };
     
     static struct option long_options[] = {
@@ -325,6 +332,7 @@ int main(int argc, char *argv[]) {
         {"ramp-time", required_argument, 0, 'r'},
         {"threads", required_argument, 0, 't'},
         {"streaming-ratio", required_argument, 0, 's'},
+        {"debug", no_argument, 0, 'd'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -350,6 +358,9 @@ int main(int argc, char *argv[]) {
                 config.streaming_ratio = atoi(optarg);
                 if (config.streaming_ratio < 0) config.streaming_ratio = 0;
                 if (config.streaming_ratio > 100) config.streaming_ratio = 100;
+                break;
+            case 'd':
+                config.debug_mode = 1;
                 break;
             case 'h':
                 print_usage(argv[0]);
