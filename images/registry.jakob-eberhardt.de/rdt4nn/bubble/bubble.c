@@ -168,10 +168,8 @@ void streaming_kernel(double *bw_data, size_t stream_size) {
 }
 
 void run_bubble(bubble_config_t *config) {
-    size_t current_size_mb = config->min_working_size_mb;
     size_t max_size_mb = config->max_working_size_mb;
     int ramp_steps = config->ramp_time_sec > 0 ? config->ramp_time_sec : 0;
-    size_t step_size_mb = ramp_steps > 0 ? (max_size_mb - current_size_mb) / ramp_steps : 0;
     
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -190,34 +188,64 @@ void run_bubble(bubble_config_t *config) {
     printf("\n");
     fflush(stdout);
     
+    size_t max_bytes = MB_TO_BYTES(max_size_mb);
+    size_t max_int_elements = max_bytes / sizeof(int);
+    size_t max_double_elements = max_bytes / sizeof(double);
+    
+    printf("Allocating maximum buffer size: %zu MB...\n", max_size_mb);
+    fflush(stdout);
+    
+    int *random_data = (int *)malloc(max_bytes);
+    double *stream_data = (double *)malloc(max_bytes);
+    
+    if (!random_data || !stream_data) {
+        fprintf(stderr, "Memory allocation failed for %zu MB\n", max_size_mb);
+        exit(1);
+    }
+    
+    printf("Initializing and flushing buffers to physical memory...\n");
+    fflush(stdout);
+    
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        size_t chunk_size = max_int_elements / config->num_threads;
+        size_t start = tid * chunk_size;
+        size_t end = (tid == config->num_threads - 1) ? max_int_elements : start + chunk_size;
+        
+        for (size_t i = start; i < end; i++) {
+            random_data[i] = i;
+        }
+        
+        chunk_size = max_double_elements / config->num_threads;
+        start = tid * chunk_size;
+        end = (tid == config->num_threads - 1) ? max_double_elements : start + chunk_size;
+        
+        for (size_t i = start; i < end; i++) {
+            stream_data[i] = (double)i;
+        }
+    }
+    
+    printf("Buffer initialization complete. Starting bubble...\n");
+    fflush(stdout);
+    
     if (ramp_steps > 0) {
         for (int step = 0; step <= ramp_steps && keep_running; step++) {
-            if (step > 0) {
-                current_size_mb += step_size_mb;
-                if (current_size_mb > max_size_mb) {
-                    current_size_mb = max_size_mb;
-                }
-            }
+            double progress = (double)step / (double)ramp_steps;
+            size_t current_size_mb = config->min_working_size_mb + 
+                                     (size_t)((max_size_mb - config->min_working_size_mb) * progress);
             
-            size_t current_bytes = MB_TO_BYTES(current_size_mb);
-            size_t int_elements = current_bytes / sizeof(int);
-            size_t double_elements = current_bytes / sizeof(double);
+            size_t current_int_elements = (current_size_mb * 1024 * 1024) / sizeof(int);
+            size_t current_double_elements = (current_size_mb * 1024 * 1024) / sizeof(double);
+            
+            if (current_int_elements > max_int_elements) current_int_elements = max_int_elements;
+            if (current_double_elements > max_double_elements) current_double_elements = max_double_elements;
             
             if (config->debug_mode) {
-                printf("Step %d/%d: Working set = %zu MB\n", step, ramp_steps, current_size_mb);
+                printf("Step %d/%d: Working set = %zu MB (%.1f%% of buffer)\n", 
+                       step, ramp_steps, current_size_mb, progress * 100.0);
                 fflush(stdout);
             }
-            
-            int *random_data = (int *)malloc(current_bytes);
-            double *stream_data = (double *)malloc(current_bytes);
-            
-            if (!random_data || !stream_data) {
-                fprintf(stderr, "Memory allocation failed for %zu MB\n", current_size_mb);
-                exit(1);
-            }
-            
-            memset(random_data, 0, current_bytes);
-            memset(stream_data, 0, current_bytes);
             
             time_t start_time = time(NULL);
             
@@ -230,18 +258,20 @@ void run_bubble(bubble_config_t *config) {
                 
                 while (keep_running && (time(NULL) - start_time < 1)) {
                     if (do_streaming) {
-                        double *mid = stream_data + (double_elements / 2);
+                        size_t half = current_double_elements / 2;
+                        double *mid = stream_data + half;
                         double scalar = 3.0;
-                        for (size_t i = 0; i < double_elements / 2; i++) {
+                        
+                        for (size_t i = 0; i < half; i++) {
                             stream_data[i] = scalar * mid[i];
                         }
-                        for (size_t i = 0; i < double_elements / 2; i++) {
+                        for (size_t i = 0; i < half; i++) {
                             mid[i] = scalar * stream_data[i];
                         }
                     } else {
                         int dump[DUMP_SIZE] = {0};
                         for (int j = 0; j < 1000; j++) {
-                            unsigned r = lfsr_rand(&lfsr) % int_elements;
+                            unsigned r = lfsr_rand(&lfsr) % current_int_elements;
                             for (int k = 0; k < DUMP_SIZE; k++) {
                                 dump[k] += random_data[r]++;
                             }
@@ -249,32 +279,13 @@ void run_bubble(bubble_config_t *config) {
                     }
                 }
             }
-            
-            free(random_data);
-            free(stream_data);
         }
         printf("\nRamp complete, exiting.\n");
     } else {
-        current_size_mb = max_size_mb;
-        size_t current_bytes = MB_TO_BYTES(current_size_mb);
-        size_t int_elements = current_bytes / sizeof(int);
-        size_t double_elements = current_bytes / sizeof(double);
-        
         if (config->debug_mode) {
-            printf("Running at %zu MB (no ramp)\n", current_size_mb);
+            printf("Running at %zu MB (no ramp)\n", max_size_mb);
             fflush(stdout);
         }
-        
-        int *random_data = (int *)malloc(current_bytes);
-        double *stream_data = (double *)malloc(current_bytes);
-        
-        if (!random_data || !stream_data) {
-            fprintf(stderr, "Memory allocation failed for %zu MB\n", current_size_mb);
-            exit(1);
-        }
-        
-        memset(random_data, 0, current_bytes);
-        memset(stream_data, 0, current_bytes);
         
         #pragma omp parallel
         {
@@ -284,15 +295,15 @@ void run_bubble(bubble_config_t *config) {
             int do_streaming = (tid * 100 / config->num_threads) < config->streaming_ratio;
             
             if (do_streaming) {
-                streaming_kernel(stream_data, double_elements);
+                streaming_kernel(stream_data, max_double_elements);
             } else {
-                random_access_kernel(random_data, int_elements, &lfsr);
+                random_access_kernel(random_data, max_int_elements, &lfsr);
             }
         }
-        
-        free(random_data);
-        free(stream_data);
     }
+    
+    free(random_data);
+    free(stream_data);
     
     if (!keep_running) {
         printf("\nBubble terminated by signal\n");

@@ -65,6 +65,14 @@ docker run --rm registry.jakob-eberhardt.de/rdt4nn/bubble \
 
 ## Design Principles
 
+### Stable Load Generation
+The bubble achieves stable, non-sawtooth load patterns by:
+1. **Pre-allocating maximum buffer** at startup (avoids repeated malloc/free)
+2. **Flushing to physical memory** with parallel initialization
+3. **Controlling working set via loop width** during ramp-up (not allocation size)
+
+This ensures monotonic pressure curves without memory allocation artifacts.
+
 ### Monotonic Pressure
 As working set size increases, memory subsystem pressure increases monotonically. Higher pressure → more interference.
 
@@ -79,6 +87,14 @@ As working set size increases, memory subsystem pressure increases monotonically
 - **Configurable mix** allows targeting specific interference patterns
 
 ## Technical Details
+
+### Buffer Initialization Strategy
+```
+1. Allocate max_size buffers once at startup
+2. Parallel initialization ensures physical page allocation
+3. During ramp: limit access range, not buffer size
+4. Result: stable load without allocation overhead
+```
 
 ### LFSR Implementation
 Uses mask `0xd0000001u` with period of 2^32, providing fast pseudo-random generation with minimal computational overhead.
