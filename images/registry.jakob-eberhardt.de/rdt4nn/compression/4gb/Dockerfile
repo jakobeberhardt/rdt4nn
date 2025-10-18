@@ -5,7 +5,9 @@ RUN apk add --no-cache \
     bzip2 \
     xz \
     zstd \
-    lz4
+    lz4 \
+	7zip
+	
 RUN mkdir /data
 RUN dd if=/dev/urandom of=/data/data1.bin bs=1M count=4096 && \
     chmod 644 /data/data1.bin
