@@ -3,3 +3,4 @@ ENV POSTGRES_USER=benchmark
 ENV POSTGRES_PASSWORD=benchmark
 ENV POSTGRES_DB=benchmark
 ENV PGPASSWORD=benchmark
+CMD ["sleep", "infinity"]
