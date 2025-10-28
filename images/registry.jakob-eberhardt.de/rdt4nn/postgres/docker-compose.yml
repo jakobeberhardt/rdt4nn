@@ -1,0 +1,15 @@
+services:
+  db:
+    image: registry.jakob-eberhardt.de/rdt4nn/postgres:latest
+    ports:
+      - "5432:5432"
+
+  bench:
+    image: registry.jakob-eberhardt.de/rdt4nn/postgres:latest
+    depends_on:
+      - db
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 5 &&
+       pgbench -i -h db -U benchmark benchmark &&
+       pgbench -c 10 -j 2 -T 60 -h db -U benchmark benchmark"
