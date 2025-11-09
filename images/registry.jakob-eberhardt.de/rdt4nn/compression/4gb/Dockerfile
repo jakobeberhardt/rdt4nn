@@ -1,17 +1,3 @@
-FROM alpine:latest
-
-RUN apk add --no-cache \
-    gzip \
-    bzip2 \
-    xz \
-    zstd \
-    lz4 \
-	7zip
-	
-RUN mkdir /data
-RUN dd if=/dev/urandom of=/data/data1.bin bs=1M count=4096 && \
-    chmod 644 /data/data1.bin
-
-WORKDIR /data
-
+FROM registry.jakob-eberhardt.de/rdt4nn/compression/base:latest
+RUN /populate.sh 4096 /data/data1.bin
 CMD ["sleep", "infinity"]
