@@ -1,7 +1,5 @@
-```sh
 export PGPASSWORD=benchmark
 export SERVER_IP=10.10.1.2
-```
 
 ## Large Dataset
 mixed
