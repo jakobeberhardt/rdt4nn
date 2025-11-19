@@ -1,5 +1,6 @@
 export PGPASSWORD=benchmark
 export SERVER_IP=10.10.1.2
+sudo apt install -y postgresql-client-14 postgresql-contrib-14
 
 ## Large Dataset
 mixed
