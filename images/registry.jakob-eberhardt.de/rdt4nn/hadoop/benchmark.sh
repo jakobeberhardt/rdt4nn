@@ -46,10 +46,24 @@ fi
 echo "Generating benchmark dataset..."
 echo "  - Dataset size: $(($DATA_SIZE_BYTES/1024/1024))MB with $MAPS_COUNT maps"
 echo "New Script!"
-hadoop jar /opt/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-*.jar randomwriter \
-    -Dmapreduce.job.maps=$MAPS_COUNT \
-    -Dtest.randomwrite.total_bytes=$DATA_SIZE_BYTES \
-    hdfs://localhost:9000/benchmark-data
+
+# Determine which data generator to use based on BENCHMARK_TYPE
+if [ "$BENCHMARK_TYPE" = "sort" ]; then
+    # TeraSort requires TeraGen data
+    RECORD_COUNT=$((DATA_SIZE_BYTES / 100))  # Each record is 100 bytes
+    echo "  - Using TeraGen for sort benchmark: $RECORD_COUNT records"
+    hadoop jar /opt/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-*.jar teragen \
+        -Dmapreduce.job.maps=$MAPS_COUNT \
+        $RECORD_COUNT \
+        hdfs://localhost:9000/benchmark-data
+else
+    # Other benchmarks use RandomWriter
+    echo "  - Using RandomWriter for ${BENCHMARK_TYPE} benchmark"
+    hadoop jar /opt/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-*.jar randomwriter \
+        -Dmapreduce.job.maps=$MAPS_COUNT \
+        -Dtest.randomwrite.total_bytes=$DATA_SIZE_BYTES \
+        hdfs://localhost:9000/benchmark-data
+fi
 
 echo "Data generation completed!"
 
