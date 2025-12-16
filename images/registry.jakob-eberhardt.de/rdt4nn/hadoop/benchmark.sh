@@ -206,6 +206,3 @@ echo "================================"
 echo "Benchmark completed successfully!"
 echo "================================"
 hdfs dfs -du -h /
-
-# Keep container running
-tail -f /dev/null
