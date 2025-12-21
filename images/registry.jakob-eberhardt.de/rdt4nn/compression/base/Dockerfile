@@ -6,7 +6,8 @@ RUN apk add --no-cache \
     xz \
     zstd \
     lz4 \
-    7zip
+    7zip \
+    wget
 
 RUN mkdir /data
 
