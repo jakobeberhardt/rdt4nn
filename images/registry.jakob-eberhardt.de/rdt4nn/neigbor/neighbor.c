@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,8 +7,26 @@
 #include <time.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdint.h>
+#include <sys/mman.h>
+#ifdef __linux__
+#include <linux/mman.h>
+#endif
 
 static volatile int running = 1;
+
+typedef enum {
+    ALLOC_MALLOC = 0,
+    ALLOC_THP,
+    ALLOC_HUGETLB_2M,
+    ALLOC_HUGETLB_1G,
+} alloc_mode_t;
+
+typedef struct {
+    char *ptr;
+    long size;
+    alloc_mode_t mode;
+} buffer_alloc_t;
 
 void signal_handler(int sig) {
     running = 0;
@@ -18,7 +38,118 @@ void print_usage(const char *prog_name) {
     printf("  --duration SECONDS     Run for specified duration (default: 3600)\n");
     printf("  --buffer-size SIZE     Buffer size (e.g., 500MB, 1GB) (default: 100MB)\n");
     printf("  --pattern PATTERN      Access pattern: random/stride/sequential (default: random)\n");
+    printf("  --hugepages MODE       Memory backing: none/thp/hugetlb-2m/hugetlb-1g (default: none)\n");
     printf("  --help                 Show this help message\n");
+}
+
+#ifndef MAP_HUGETLB
+#define MAP_HUGETLB 0x40000
+#endif
+
+#ifndef MAP_HUGE_SHIFT
+#define MAP_HUGE_SHIFT 26
+#endif
+
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_2MB (21 << MAP_HUGE_SHIFT)
+#endif
+
+#ifndef MAP_HUGE_1GB
+#define MAP_HUGE_1GB (30 << MAP_HUGE_SHIFT)
+#endif
+
+static const char *alloc_mode_to_string(alloc_mode_t mode) {
+    switch (mode) {
+        case ALLOC_MALLOC: return "none";
+        case ALLOC_THP: return "thp";
+        case ALLOC_HUGETLB_2M: return "hugetlb-2m";
+        case ALLOC_HUGETLB_1G: return "hugetlb-1g";
+        default: return "unknown";
+    }
+}
+
+static int parse_alloc_mode(const char *mode_str, alloc_mode_t *out_mode) {
+    if (mode_str == NULL || out_mode == NULL) {
+        return -1;
+    }
+    if (strcmp(mode_str, "none") == 0) {
+        *out_mode = ALLOC_MALLOC;
+        return 0;
+    }
+    if (strcmp(mode_str, "thp") == 0) {
+        *out_mode = ALLOC_THP;
+        return 0;
+    }
+    if (strcmp(mode_str, "hugetlb-2m") == 0) {
+        *out_mode = ALLOC_HUGETLB_2M;
+        return 0;
+    }
+    if (strcmp(mode_str, "hugetlb-1g") == 0) {
+        *out_mode = ALLOC_HUGETLB_1G;
+        return 0;
+    }
+    return -1;
+}
+
+static int alloc_buffer(long buffer_size, alloc_mode_t mode, buffer_alloc_t *out_alloc) {
+    if (out_alloc == NULL || buffer_size <= 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    out_alloc->ptr = NULL;
+    out_alloc->size = buffer_size;
+    out_alloc->mode = mode;
+
+    if (mode == ALLOC_MALLOC) {
+        out_alloc->ptr = (char *)malloc((size_t)buffer_size);
+        return out_alloc->ptr ? 0 : -1;
+    }
+
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    if (mode == ALLOC_HUGETLB_2M || mode == ALLOC_HUGETLB_1G) {
+        flags |= MAP_HUGETLB;
+        if (mode == ALLOC_HUGETLB_2M) {
+            flags |= MAP_HUGE_2MB;
+            if ((buffer_size % (2L * 1024 * 1024)) != 0) {
+                errno = EINVAL;
+                return -1;
+            }
+        } else {
+            flags |= MAP_HUGE_1GB;
+            if ((buffer_size % (1024L * 1024 * 1024)) != 0) {
+                errno = EINVAL;
+                return -1;
+            }
+        }
+    }
+
+    void *p = mmap(NULL, (size_t)buffer_size, PROT_READ | PROT_WRITE, flags, -1, 0);
+    if (p == MAP_FAILED) {
+        out_alloc->ptr = NULL;
+        return -1;
+    }
+    out_alloc->ptr = (char *)p;
+
+    if (mode == ALLOC_THP) {
+        // Best-effort: encourages transparent huge pages (usually 2MB; 1GB THP depends on kernel settings).
+#ifdef MADV_HUGEPAGE
+        (void)madvise(out_alloc->ptr, (size_t)buffer_size, MADV_HUGEPAGE);
+#endif
+    }
+    return 0;
+}
+
+static void free_buffer(buffer_alloc_t *alloc) {
+    if (alloc == NULL || alloc->ptr == NULL) {
+        return;
+    }
+    if (alloc->mode == ALLOC_MALLOC) {
+        free(alloc->ptr);
+    } else {
+        (void)munmap(alloc->ptr, (size_t)alloc->size);
+    }
+    alloc->ptr = NULL;
 }
 
 long parse_size(const char *size_str) {
@@ -113,6 +244,7 @@ int main(int argc, char *argv[]) {
     int duration = 3600; 
     long buffer_size = 100 * 1024 * 1024; 
     char pattern[32] = "random"; 
+    alloc_mode_t alloc_mode = ALLOC_MALLOC;
     
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
@@ -157,6 +289,16 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
+        } else if (strcmp(argv[i], "--hugepages") == 0) {
+            if (i + 1 < argc) {
+                if (parse_alloc_mode(argv[++i], &alloc_mode) != 0) {
+                    fprintf(stderr, "Invalid --hugepages mode: %s. Use none, thp, hugetlb-2m, or hugetlb-1g\n", argv[i]);
+                    return 1;
+                }
+            } else {
+                fprintf(stderr, "--hugepages requires a value\n");
+                return 1;
+            }
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             print_usage(argv[0]);
@@ -168,12 +310,23 @@ int main(int argc, char *argv[]) {
     printf("Duration: %d seconds\n", duration);
     printf("Buffer size: %ld bytes (%.2f MB)\n", buffer_size, (double)buffer_size / (1024 * 1024));
     printf("Access pattern: %s\n", pattern);
-    
-    char *buffer = malloc(buffer_size);
-    if (!buffer) {
-        fprintf(stderr, "Failed to allocate %ld bytes: %s\n", buffer_size, strerror(errno));
+    printf("Hugepages: %s\n", alloc_mode_to_string(alloc_mode));
+
+    if (alloc_mode == ALLOC_HUGETLB_2M && (buffer_size % (2L * 1024 * 1024)) != 0) {
+        fprintf(stderr, "Buffer size must be a multiple of 2MB for --hugepages hugetlb-2m\n");
         return 1;
     }
+    if (alloc_mode == ALLOC_HUGETLB_1G && (buffer_size % (1024L * 1024 * 1024)) != 0) {
+        fprintf(stderr, "Buffer size must be a multiple of 1GB for --hugepages hugetlb-1g\n");
+        return 1;
+    }
+
+    buffer_alloc_t alloc;
+    if (alloc_buffer(buffer_size, alloc_mode, &alloc) != 0) {
+        fprintf(stderr, "Failed to allocate %ld bytes (hugepages=%s): %s\n", buffer_size, alloc_mode_to_string(alloc_mode), strerror(errno));
+        return 1;
+    }
+    char *buffer = alloc.ptr;
     
     printf("Initializing buffer and forcing allocation...\n");
     for (long i = 0; i < buffer_size; i += 4096) {
@@ -191,6 +344,6 @@ int main(int argc, char *argv[]) {
     }
     
     printf("Neighbor workload completed\n");
-    free(buffer);
+    free_buffer(&alloc);
     return 0;
 }
