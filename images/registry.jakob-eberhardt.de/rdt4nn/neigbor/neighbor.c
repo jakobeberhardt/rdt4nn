@@ -8,10 +8,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <stdint.h>
+#include <limits.h>
 #include <sys/mman.h>
-#ifdef __linux__
-#include <linux/mman.h>
-#endif
 
 static volatile int running = 1;
 
@@ -27,6 +25,22 @@ typedef struct {
     long size;
     alloc_mode_t mode;
 } buffer_alloc_t;
+
+static long round_up_multiple(long value, long multiple) {
+    if (multiple <= 0) {
+        return value;
+    }
+    long rem = value % multiple;
+    if (rem == 0) {
+        return value;
+    }
+    long add = multiple - rem;
+    if (value > LONG_MAX - add) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    return value + add;
+}
 
 void signal_handler(int sig) {
     running = 0;
@@ -106,35 +120,38 @@ static int alloc_buffer(long buffer_size, alloc_mode_t mode, buffer_alloc_t *out
         return out_alloc->ptr ? 0 : -1;
     }
 
+    long map_size = buffer_size;
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
     if (mode == ALLOC_HUGETLB_2M || mode == ALLOC_HUGETLB_1G) {
         flags |= MAP_HUGETLB;
         if (mode == ALLOC_HUGETLB_2M) {
             flags |= MAP_HUGE_2MB;
-            if ((buffer_size % (2L * 1024 * 1024)) != 0) {
-                errno = EINVAL;
-                return -1;
-            }
+            map_size = round_up_multiple(buffer_size, 2L * 1024 * 1024);
         } else {
             flags |= MAP_HUGE_1GB;
-            if ((buffer_size % (1024L * 1024 * 1024)) != 0) {
-                errno = EINVAL;
-                return -1;
-            }
+            map_size = round_up_multiple(buffer_size, 1024L * 1024 * 1024);
         }
     }
 
-    void *p = mmap(NULL, (size_t)buffer_size, PROT_READ | PROT_WRITE, flags, -1, 0);
+    if (map_size <= 0) {
+        if (errno == 0) {
+            errno = EINVAL;
+        }
+        return -1;
+    }
+
+    void *p = mmap(NULL, (size_t)map_size, PROT_READ | PROT_WRITE, flags, -1, 0);
     if (p == MAP_FAILED) {
         out_alloc->ptr = NULL;
         return -1;
     }
     out_alloc->ptr = (char *)p;
+    out_alloc->size = map_size;
 
     if (mode == ALLOC_THP) {
         // Best-effort: encourages transparent huge pages (usually 2MB; 1GB THP depends on kernel settings).
 #ifdef MADV_HUGEPAGE
-        (void)madvise(out_alloc->ptr, (size_t)buffer_size, MADV_HUGEPAGE);
+        (void)madvise(out_alloc->ptr, (size_t)map_size, MADV_HUGEPAGE);
 #endif
     }
     return 0;
@@ -308,18 +325,8 @@ int main(int argc, char *argv[]) {
     
     printf("Neighbor workload starting...\n");
     printf("Duration: %d seconds\n", duration);
-    printf("Buffer size: %ld bytes (%.2f MB)\n", buffer_size, (double)buffer_size / (1024 * 1024));
     printf("Access pattern: %s\n", pattern);
     printf("Hugepages: %s\n", alloc_mode_to_string(alloc_mode));
-
-    if (alloc_mode == ALLOC_HUGETLB_2M && (buffer_size % (2L * 1024 * 1024)) != 0) {
-        fprintf(stderr, "Buffer size must be a multiple of 2MB for --hugepages hugetlb-2m\n");
-        return 1;
-    }
-    if (alloc_mode == ALLOC_HUGETLB_1G && (buffer_size % (1024L * 1024 * 1024)) != 0) {
-        fprintf(stderr, "Buffer size must be a multiple of 1GB for --hugepages hugetlb-1g\n");
-        return 1;
-    }
 
     buffer_alloc_t alloc;
     if (alloc_buffer(buffer_size, alloc_mode, &alloc) != 0) {
@@ -327,6 +334,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     char *buffer = alloc.ptr;
+
+    printf("Accessed buffer size: %ld bytes (%.2f MB)\n", buffer_size, (double)buffer_size / (1024 * 1024));
+    if (alloc.size != buffer_size) {
+        printf("Mapped size: %ld bytes (%.2f MB)\n", alloc.size, (double)alloc.size / (1024 * 1024));
+    }
     
     printf("Initializing buffer and forcing allocation...\n");
     for (long i = 0; i < buffer_size; i += 4096) {

@@ -13,4 +13,13 @@ This container provides a configurable memory workload generator that can be use
 
 ```shell
 /neighbor --duration 3600 --buffer-size 1000MB --pattern random" container=random
+
+# Huge pages (best-effort THP)
+/neighbor --duration 3600 --buffer-size 1000MB --pattern random --hugepages thp
+
+# Explicit 1GB hugetlb hugepages (requires host reservation; mapping is rounded up to 1GB)
+/neighbor --duration 3600 --buffer-size 1GB --pattern random --hugepages hugetlb-1g
+
+# Small logical buffer, but backed by a 1GB hugetlb page (still consumes one full 1GB hugepage once touched)
+/neighbor --duration 3600 --buffer-size 6MB --pattern random --hugepages hugetlb-1g
 ```
